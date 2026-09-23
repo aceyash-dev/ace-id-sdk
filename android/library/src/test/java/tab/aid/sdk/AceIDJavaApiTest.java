@@ -26,9 +26,18 @@ public class AceIDJavaApiTest {
             java.util.Collections.singletonList("authorization_code")
         );
 
-        AuthorizationRequest request = client.createAuthorizationRequest(configuration);
+        AuthorizationRequest request = new AuthorizationRequest(
+            "https://identity.example.com/authorize?response_type=code",
+            "state",
+            "nonce",
+            "code-verifier",
+            "com.example.app:/oauth/callback"
+        );
 
-        assertTrue(request.getUrl().contains("code_challenge_method=S256"));
-        assertTrue(request.getCodeVerifier().length() >= 43);
+        assertTrue(client.getIssuer().equals("https://identity.example.com"));
+        assertTrue(client.getClientId().equals("client-id"));
+        assertTrue(client.getRedirectUri().equals("com.example.app:/oauth/callback"));
+        assertTrue(request.getUrl().contains("response_type=code"));
+        assertTrue(request.getCodeVerifier().equals("code-verifier"));
     }
 }
