@@ -18,5 +18,6 @@ android {
 }
 
 dependencies {
+    implementation("androidx.browser:browser:1.10.0")
     testImplementation("junit:junit:4.13.2")
 }
