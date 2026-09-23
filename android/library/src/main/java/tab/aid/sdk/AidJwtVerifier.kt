@@ -21,8 +21,8 @@ internal object AidJwtVerifier {
         val parts = jwt.split('.')
         if (parts.size != 3) throw AidException("ID token is not a valid JWT")
 
-        val header = parseJson(decode(parts[0]), "ID token header")
-        val claims = parseJson(decode(parts[1]), "ID token claims")
+        val header = parseJson(decode(parts[0]).toString(Charsets.UTF_8), "ID token header")
+        val claims = parseJson(decode(parts[1]).toString(Charsets.UTF_8), "ID token claims")
         val signature = decode(parts[2])
 
         val algorithm = header.optString("alg")
