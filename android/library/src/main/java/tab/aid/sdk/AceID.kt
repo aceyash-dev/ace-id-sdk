@@ -74,9 +74,7 @@ class AceID(
     fun startAuthorization(
         context: Context,
         configuration: OidcConfiguration = discover(),
-        transactionTtlMs: Long = DEFAULT_TRANSACTION_TTL_MS,
     ): AuthorizationRequest {
-        require(transactionTtlMs > 0) { "transactionTtlMs must be positive" }
 
         val request = createAuthorizationRequest(configuration)
         AidSecureStorage(context, normalizedIssuer, clientId).put(
@@ -191,6 +189,64 @@ class AceID(
     fun getUser(context: Context): AidUser? = getSession(context)?.user
 
     fun getAccessToken(context: Context): String? = getSession(context)?.tokens?.accessToken
+
+    @Synchronized
+    fun getValidAccessToken(
+        context: Context,
+        leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+    ): String? {
+        require(leewaySeconds >= 0) { "leewaySeconds must not be negative" }
+
+        val storage = AidSecureStorage(context, normalizedIssuer, clientId)
+        val store = AidSessionStore(storage)
+        val session = store.get() ?: return null
+        val expiresAt = session.tokens.expiresAt
+        val now = System.currentTimeMillis() / 1000L
+
+        if (expiresAt == null || expiresAt > now + leewaySeconds) {
+            return session.tokens.accessToken
+        }
+
+        val refreshToken = session.tokens.refreshToken
+            ?: throw AidException("Access token has expired and no refresh token is available")
+
+        val configuration = discover()
+        if (
+            configuration.grantTypesSupported.isNotEmpty() &&
+            !configuration.grantTypesSupported.contains("refresh_token")
+        ) {
+            throw AidDiscoveryException("OIDC provider does not advertise refresh_token grant support")
+        }
+
+        val refreshed = AidTokenClient.refresh(
+            configuration = configuration,
+            clientId = clientId,
+            refreshToken = refreshToken,
+            scope = scope,
+        )
+
+        var user = session.user
+        val verifiedIdToken = refreshed.idToken
+        if (verifiedIdToken != null) {
+            val refreshedUser = AidJwtVerifier.verify(
+                jwt = verifiedIdToken,
+                configuration = configuration,
+                clientId = clientId,
+            )
+            if (refreshedUser.subject != session.user.subject) {
+                throw AidException("Refreshed ID token subject does not match the current session")
+            }
+            user = refreshedUser
+        }
+
+        val updatedTokens = refreshed.copy(
+            refreshToken = refreshed.refreshToken ?: refreshToken,
+            idToken = refreshed.idToken ?: session.tokens.idToken,
+        )
+        val updatedSession = AidSession(tokens = updatedTokens, user = user)
+        store.save(updatedSession)
+        return updatedTokens.accessToken
+    }
 
     fun signOut(context: Context) {
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
