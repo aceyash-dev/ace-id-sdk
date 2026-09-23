@@ -1,17 +1,17 @@
-aid-sdk
+# ace-id-sdk
 
-Official JavaScript/TypeScript SDK for Ace ID — an OpenID Connect identity provider.
+Official JavaScript/TypeScript SDK for Ace ID, an OpenID Connect identity provider.
 
-- Browser ("aid-sdk") — public client. Authorization Code + PKCE (S256). No client secret.
-- Server ("ace-id-sdk/server") — confidential client. Token exchange + UserInfo.
+## Install
 
-Install
+```sh
+npm install ace-id-sdk
+```
 
-npm i aid-sdk
+## Browser
 
-Browser
-
-import { AID } from "aid-sdk";
+```ts
+import { AID } from "ace-id-sdk";
 
 const aid = new AID({
   issuer: "https://identity.ace-base.cc",
@@ -19,19 +19,31 @@ const aid = new AID({
   redirectUri: "https://example.com/callback",
 });
 
-// Step 1 — redirect the user
+// Step 1: redirect the user
 await aid.signIn();
 
-// Step 2 — on the redirect URI
+// Step 2: handle the redirect
 const session = await aid.handleCallback();
+
 console.log(session.user);
+```
 
-Methods: "signIn" · "handleCallback" · "getSession" · "isAuthenticated" · "getUser" · "getAccessToken" · "signOut".
+Available methods include:
 
-Storage defaults to "sessionStorage". Use "MemoryStorage" only in tests or fully controlled environments.
+- `signIn()`
+- `handleCallback()`
+- `getSession()`
+- `isAuthenticated()`
+- `getUser()`
+- `getAccessToken()`
+- `getValidAccessToken()`
+- `signOut()`
 
-Server
+Storage defaults to `sessionStorage`. Use `MemoryStorage` only in tests or fully controlled environments.
 
+## Server
+
+```ts
 import { AIDServer } from "ace-id-sdk/server";
 
 const aid = new AIDServer({
@@ -41,25 +53,15 @@ const aid = new AIDServer({
 });
 
 const tokens = await aid.exchangeCode(code, redirectUri);
-const user   = await aid.userInfo(tokens.accessToken);
-
-Security notes
-
-- PKCE S256 only. No plain fallback.
-- ID tokens are verified against the provider JWKS ("iss", "aud", "exp", "sub", "nonce").
-- Never import "ace-id-sdk/server" in browser bundles.
-- Endpoints are discovered from "{issuer}/.well-known/openid-configuration". The issuer is validated against the document.
-
-License
-
-MIT
+const user = await aid.userInfo(tokens.accessToken);
+```
 
 ## Vanilla JavaScript
 
 `ace-id-sdk` can also be loaded directly in a browser without npm or a bundler.
 
 ```html
-<script src="https://unpkg.com/ace-id-sdk@0.1.1/dist/ace-id-sdk.global.js"></script>
+<script src="https://unpkg.com/ace-id-sdk@0.2.0/dist/ace-id-sdk.global.js"></script>
 <script>
   const auth = new AceID.AID({
     issuer: "https://your-issuer.example.com",
@@ -86,3 +88,27 @@ Available exports include:
 - `AceID.AIDCallbackError`
 - `AceID.AIDTokenError`
 - `AceID.AIDAuthenticationError`
+
+## Android
+
+The repository also contains a native Kotlin Android SDK under `android/`.
+
+- Namespace: `tab.aid.sdk`
+- Minimum Android version: API 23
+- Compile SDK: API 36
+- Authentication: Authorization Code + PKCE (S256)
+- Distribution: Android Archive (AAR)
+
+The Android workflow is manually triggered from the GitHub Actions tab.
+
+## Security notes
+
+- PKCE S256 only. No plain fallback.
+- ID tokens are verified against the provider JWKS (`iss`, `aud`, `exp`, `sub`, and `nonce` where applicable).
+- Never import `ace-id-sdk/server` in browser bundles.
+- Endpoints are discovered from `{issuer}/.well-known/openid-configuration`.
+- The discovered issuer is validated against the configured issuer.
+
+## License
+
+MIT
