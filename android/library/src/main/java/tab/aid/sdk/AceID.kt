@@ -11,7 +11,7 @@ import java.security.MessageDigest
  * Network and cryptographic operations are synchronous and must not run on
  * the Android main thread.
  */
-class AceID(
+class AceID @JvmOverloads constructor(
     val issuer: String,
     val clientId: String,
     val redirectUri: String,
@@ -71,6 +71,7 @@ class AceID(
      * The application must register [redirectUri] and pass the resulting callback
      * URI to [handleCallback].
      */
+    @JvmOverloads
     fun startAuthorization(
         context: Context,
         configuration: OidcConfiguration = discover(),
@@ -177,6 +178,7 @@ class AceID(
     fun getSession(context: Context): AidSession? =
         AidSessionStore(AidSecureStorage(context, normalizedIssuer, clientId)).get()
 
+    @JvmOverloads
     fun isAuthenticated(
         context: Context,
         leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
@@ -191,6 +193,7 @@ class AceID(
     fun getAccessToken(context: Context): String? = getSession(context)?.tokens?.accessToken
 
     @Synchronized
+    @JvmOverloads
     fun getValidAccessToken(
         context: Context,
         leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
