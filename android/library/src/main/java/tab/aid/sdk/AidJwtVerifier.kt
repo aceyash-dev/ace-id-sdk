@@ -16,7 +16,7 @@ internal object AidJwtVerifier {
         jwt: String,
         configuration: OidcConfiguration,
         clientId: String,
-        nonce: String,
+        nonce: String? = null,
     ): AidUser {
         val parts = jwt.split('.')
         if (parts.size != 3) throw AidException("ID token is not a valid JWT")
@@ -55,7 +55,7 @@ internal object AidJwtVerifier {
         val subject = claims.optString("sub")
         if (subject.isBlank()) throw AidException("ID token is missing sub")
 
-        if (claims.optString("nonce") != nonce) {
+        if (nonce != null && claims.optString("nonce") != nonce) {
             throw AidException("ID token nonce does not match the authorization transaction")
         }
 
