@@ -53,3 +53,36 @@ Security notes
 License
 
 MIT
+
+## Vanilla JavaScript
+
+`ace-id-sdk` can also be loaded directly in a browser without npm or a bundler.
+
+```html
+<script src="https://unpkg.com/ace-id-sdk@0.1.1/dist/ace-id-sdk.global.js"></script>
+<script>
+  const auth = new AceID.AID({
+    issuer: "https://your-issuer.example.com",
+    clientId: "your-client-id",
+    redirectUri: "https://your-app.example.com/callback"
+  });
+
+  console.log(auth);
+</script>
+```
+
+The browser bundle exposes the SDK through the global `AceID` object.
+
+Available exports include:
+
+- `AceID.AID`
+- `AceID.MemoryStorage`
+- `AceID.SessionStorage`
+- `AceID.LocalStorage`
+- `AceID.createCodeVerifier`
+- `AceID.createCodeChallenge`
+- `AceID.AIDError`
+- `AceID.AIDDiscoveryError`
+- `AceID.AIDCallbackError`
+- `AceID.AIDTokenError`
+- `AceID.AIDAuthenticationError`

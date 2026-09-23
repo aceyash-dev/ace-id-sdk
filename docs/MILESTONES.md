@@ -22,7 +22,7 @@
 
 ## In Progress
 
-- [ ] Vanilla JS distribution
+- [x] Vanilla JS distribution
 - [ ] Android Kotlin SDK
 - [ ] Android Java-compatible API
 - [ ] Shared cross-platform SDK documentation
