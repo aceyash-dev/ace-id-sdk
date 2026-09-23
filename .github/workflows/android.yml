@@ -1,0 +1,36 @@
+name: Android SDK
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.6.0"
+
+      - name: Build Android library
+        working-directory: android
+        run: gradle test assemble
+
+      - name: Upload AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ace-id-sdk-android
+          path: android/library/build/outputs/aar/*.aar
