@@ -225,7 +225,7 @@ class AceID @JvmOverloads constructor(
             configuration = configuration,
             clientId = clientId,
             refreshToken = refreshToken,
-            scope = scope,
+            scope = session.tokens.scope ?: scope,
         )
 
         var user = session.user
