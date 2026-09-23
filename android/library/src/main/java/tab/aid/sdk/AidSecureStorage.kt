@@ -34,7 +34,7 @@ internal class AidSecureStorage(
                 .put(ciphertext)
                 .array()
             prefs.edit()
-                .putString(name, Base64.encodeToString(payload, Base64.NO_WRAP))
+                .putString(scopedName(name), Base64.encodeToString(payload, Base64.NO_WRAP))
                 .commit()
         } catch (e: Exception) {
             throw AidException("Failed to securely store SDK data", e)
@@ -42,7 +42,7 @@ internal class AidSecureStorage(
     }
 
     fun get(name: String): String? {
-        val encoded = prefs.getString(name, null) ?: return null
+        val encoded = prefs.getString(scopedName(name), null) ?: return null
         return try {
             val payload = Base64.decode(encoded, Base64.NO_WRAP)
             val buffer = ByteBuffer.wrap(payload)
@@ -62,8 +62,10 @@ internal class AidSecureStorage(
     }
 
     fun remove(name: String) {
-        prefs.edit().remove(name).commit()
+        prefs.edit().remove(scopedName(name)).commit()
     }
+
+    private fun scopedName(name: String): String = "$name.$keyAlias"
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore")
