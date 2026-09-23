@@ -2,6 +2,14 @@ name: Android SDK
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "GitHub release tag"
+        required: true
+        default: "v0.2.0"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -26,8 +34,25 @@ jobs:
         working-directory: android
         run: gradle test assemble
 
-      - name: Upload AAR
+      - name: Prepare AAR
+        run: |
+          mkdir -p release
+          cp android/library/build/outputs/aar/library-release.aar "release/ace-id-sdk-android-${{ inputs.release_tag }}.aar"
+
+      - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: ace-id-sdk-android
-          path: android/library/build/outputs/aar/*.aar
+          path: release/*.aar
+
+      - name: Create GitHub release and upload AAR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "release/ace-id-sdk-android-${RELEASE_TAG}.aar" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Android SDK $RELEASE_TAG" \
+            --generate-notes
