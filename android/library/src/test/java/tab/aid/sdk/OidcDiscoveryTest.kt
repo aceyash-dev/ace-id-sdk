@@ -1,8 +1,8 @@
 package tab.aid.sdk
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Test
 
 class OidcDiscoveryTest {
     @Test
@@ -15,7 +15,7 @@ class OidcDiscoveryTest {
 
     @Test
     fun httpIsRejectedExceptLocalhost() {
-        assertFailsWith<AidDiscoveryException> {
+        assertThrows(AidDiscoveryException::class.java) {
             OidcDiscovery.normalizeIssuer("http://issuer.example.com")
         }
     }
