@@ -1,7 +1,7 @@
 package tab.aid.sdk
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
+import org.junit.Test
+import org.junit.Assert.assertEquals
 
 class AceIDTest {
     @Test
