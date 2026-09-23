@@ -16,7 +16,14 @@ public class AceIDJavaApiTest {
         OidcConfiguration configuration = new OidcConfiguration(
             "https://identity.example.com",
             "https://identity.example.com/authorize",
-            "https://identity.example.com/token"
+            "https://identity.example.com/token",
+            null,
+            "https://identity.example.com/jwks",
+            null,
+            null,
+            java.util.Collections.singletonList("S256"),
+            java.util.Collections.singletonList("code"),
+            java.util.Collections.singletonList("authorization_code")
         );
 
         AuthorizationRequest request = client.createAuthorizationRequest(configuration);
