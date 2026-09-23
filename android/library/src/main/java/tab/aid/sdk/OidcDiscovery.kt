@@ -68,7 +68,7 @@ internal object OidcDiscovery {
             throw AidDiscoveryException("OIDC discovery document is missing \"token_endpoint\"")
         }
         return OidcConfiguration(
-            issuer = normalizedIssuer,
+            issuer = discoveredIssuer,
             authorizationEndpoint = authorizationEndpoint,
             tokenEndpoint = tokenEndpoint,
             userInfoEndpoint = doc.optString("userinfo_endpoint").takeIf { it.isNotBlank() },
