@@ -37,7 +37,7 @@ jobs:
       - name: Prepare AAR
         run: |
           mkdir -p release
-          cp android/library/build/outputs/aar/library-release.aar "release/ace-id-sdk-android-${{ inputs.release_tag }}.aar"
+          cp android/library/build/outputs/aar/library-release.aar "${{ github.workspace }}/release/ace-id-sdk-android-${{ inputs.release_tag }}.aar"
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
@@ -45,14 +45,22 @@ jobs:
           name: ace-id-sdk-android
           path: release/*.aar
 
+  release:
+    needs: build
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download successful build artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: ace-id-sdk-android
+          path: release
+
       - name: Create GitHub release and upload AAR
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          gh release create "$RELEASE_TAG" \
-            "release/ace-id-sdk-android-${RELEASE_TAG}.aar" \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "Android SDK $RELEASE_TAG" \
-            --generate-notes
+          test -f "release/ace-id-sdk-android-${RELEASE_TAG}.aar"
+          gh release create "$RELEASE_TAG"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "Android SDK $RELEASE_TAG"             --generate-notes
