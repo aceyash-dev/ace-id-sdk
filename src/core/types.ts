@@ -74,3 +74,13 @@ export interface AuthTransaction {
    */
   returnTo?: string;
 }
+export interface AIDProjectConfig {
+  issuer: string;
+  app_id: string;
+  client_id: string;
+  redirect_uri: string;
+  scopes: string[];
+  project_type?: string;
+  framework?: string;
+  sdk?: string;
+}

@@ -15,4 +15,7 @@ export type {
   AIDStorage,
   AIDTokens,
   AIDUser,
+  AIDProjectConfig,
 } from './core/types.js';
+
+export { createAIDFromProjectConfig } from './browser/project-config.js';
