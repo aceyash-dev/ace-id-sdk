@@ -3,13 +3,15 @@ package tab.aid.sdk
 import android.content.Context
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 
 /**
  * Android entry point for ace-id-sdk.
  *
- * Network and cryptographic operations are synchronous and must not run on
- * the Android main thread.
+ * Existing synchronous APIs are preserved for compatibility. New async APIs
+ * move network and cryptographic work off the main thread automatically.
  */
 class AceID @JvmOverloads constructor(
     val issuer: String,
@@ -18,6 +20,7 @@ class AceID @JvmOverloads constructor(
     val scope: String = "openid profile email",
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
+    private val runtimeCacheKey: String = AidSdkRuntime.cacheKey(normalizedIssuer, clientId)
 
     companion object {
         const val DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000L
@@ -31,6 +34,23 @@ class AceID @JvmOverloads constructor(
     }
 
     fun discover(): OidcConfiguration = OidcDiscovery.fetch(normalizedIssuer)
+
+    /**
+     * Coroutine-friendly discovery. Uses the SDK's bounded in-memory cache.
+     */
+    suspend fun discoverAsync(): OidcConfiguration =
+        withContext(Dispatchers.IO) { discover() }
+
+    /**
+     * Starts authorization without blocking the caller for discovery/network work.
+     * The browser callback is still completed through [handleCallback].
+     */
+    suspend fun login(context: Context): AuthorizationRequest {
+        val configuration = withContext(Dispatchers.IO) { discover() }
+        return withContext(Dispatchers.Main) {
+            startAuthorization(context, configuration)
+        }
+    }
 
     fun createAuthorizationRequest(
         configuration: OidcConfiguration,
@@ -76,7 +96,6 @@ class AceID @JvmOverloads constructor(
         context: Context,
         configuration: OidcConfiguration = discover(),
     ): AuthorizationRequest {
-
         val request = createAuthorizationRequest(configuration)
         AidSecureStorage(context, normalizedIssuer, clientId).put(
             "transaction",
@@ -172,21 +191,45 @@ class AceID @JvmOverloads constructor(
         val session = AidSession(tokens = tokens, user = user)
         AidSessionStore(storage).save(session)
         storage.remove("transaction")
+        AidSdkRuntime.clearAccount(runtimeCacheKey)
         return session
+    }
+
+    suspend fun handleCallbackAsync(
+        context: Context,
+        callbackUri: Uri,
+    ): AidSession = withContext(Dispatchers.IO) {
+        handleCallback(context, callbackUri)
     }
 
     fun getSession(context: Context): AidSession? =
         AidSessionStore(AidSecureStorage(context, normalizedIssuer, clientId)).get()
 
+    fun getSessionState(
+        context: Context,
+        leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+    ): AidSessionState {
+        val session = getSession(context) ?: return AidSessionState.Unauthenticated
+        val expiresAt = session.tokens.expiresAt ?: return AidSessionState.Authenticated(session)
+        return if (expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds) {
+            AidSessionState.Authenticated(session)
+        } else {
+            AidSessionState.Expired(session)
+        }
+    }
+
+    suspend fun getSessionStateAsync(
+        context: Context,
+        leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+    ): AidSessionState = withContext(Dispatchers.IO) {
+        getSessionState(context, leewaySeconds)
+    }
+
     @JvmOverloads
     fun isAuthenticated(
         context: Context,
         leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
-    ): Boolean {
-        val session = getSession(context) ?: return false
-        val expiresAt = session.tokens.expiresAt ?: return true
-        return expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds
-    }
+    ): Boolean = getSessionState(context, leewaySeconds) is AidSessionState.Authenticated
 
     fun getUser(context: Context): AidUser? = getSession(context)?.user
 
@@ -198,36 +241,43 @@ class AceID @JvmOverloads constructor(
      */
     fun getAccount(context: Context): AidUser? {
         val session = getSession(context) ?: return null
+        AidSdkRuntime.account(runtimeCacheKey)?.let { cached ->
+            if (cached.subject == session.user.subject) return cached
+            AidSdkRuntime.clearAccount(runtimeCacheKey)
+        }
+
         val accessToken = getValidAccessToken(context) ?: return null
-        val expectedSubject = getSession(context)?.user?.subject ?: session.user.subject
         val endpoint = discover().userInfoEndpoint
             ?: throw AidDiscoveryException("OIDC provider does not advertise a userinfo endpoint")
 
         val account = AidTokenClient.fetchUserInfo(endpoint, accessToken)
-        if (account.subject != expectedSubject) {
+        if (account.subject != session.user.subject) {
             throw AidException("OIDC userinfo subject does not match the current session")
         }
+        AidSdkRuntime.putAccount(runtimeCacheKey, account)
         return account
     }
 
+    suspend fun getAccountAsync(context: Context): AidUser? =
+        withContext(Dispatchers.IO) { getAccount(context) }
+
     fun getAccessToken(context: Context): String? = getSession(context)?.tokens?.accessToken
 
-    @Synchronized
     @JvmOverloads
     fun getValidAccessToken(
         context: Context,
         leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
-    ): String? {
+    ): String? = AidSdkRuntime.withRefreshLock(runtimeCacheKey) {
         require(leewaySeconds >= 0) { "leewaySeconds must not be negative" }
 
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         val store = AidSessionStore(storage)
-        val session = store.get() ?: return null
+        val session = store.get() ?: return@withRefreshLock null
         val expiresAt = session.tokens.expiresAt
         val now = System.currentTimeMillis() / 1000L
 
         if (expiresAt == null || expiresAt > now + leewaySeconds) {
-            return session.tokens.accessToken
+            return@withRefreshLock session.tokens.accessToken
         }
 
         val refreshToken = session.tokens.refreshToken
@@ -268,12 +318,24 @@ class AceID @JvmOverloads constructor(
         )
         val updatedSession = AidSession(tokens = updatedTokens, user = user)
         store.save(updatedSession)
-        return updatedTokens.accessToken
+        return@withRefreshLock updatedTokens.accessToken
+    }
+
+    suspend fun getValidAccessTokenAsync(
+        context: Context,
+        leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+    ): String? = withContext(Dispatchers.IO) {
+        getValidAccessToken(context, leewaySeconds)
     }
 
     fun signOut(context: Context) {
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         storage.remove("session")
         storage.remove("transaction")
+        AidSdkRuntime.clearAccount(runtimeCacheKey)
+    }
+
+    suspend fun signOutAsync(context: Context) = withContext(Dispatchers.IO) {
+        signOut(context)
     }
 }
