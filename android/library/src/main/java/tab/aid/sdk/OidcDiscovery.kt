@@ -52,7 +52,7 @@ internal object OidcDiscovery {
         }
         val discoveredIssuer = doc.optString("issuer")
         if (discoveredIssuer.isBlank()) {
-            throw AidDiscoveryException("OIDC discovery document is missing "issuer"")
+            throw AidDiscoveryException("OIDC discovery document is missing \"issuer\"")
         }
         if (normalizeIssuer(discoveredIssuer) != normalizedIssuer) {
             throw AidDiscoveryException(
@@ -61,11 +61,11 @@ internal object OidcDiscovery {
         }
         val authorizationEndpoint = doc.optString("authorization_endpoint")
         if (authorizationEndpoint.isBlank()) {
-            throw AidDiscoveryException("OIDC discovery document is missing "authorization_endpoint"")
+            throw AidDiscoveryException("OIDC discovery document is missing \"authorization_endpoint\"")
         }
         val tokenEndpoint = doc.optString("token_endpoint")
         if (tokenEndpoint.isBlank()) {
-            throw AidDiscoveryException("OIDC discovery document is missing "token_endpoint"")
+            throw AidDiscoveryException("OIDC discovery document is missing \"token_endpoint\"")
         }
         return OidcConfiguration(
             issuer = discoveredIssuer,
