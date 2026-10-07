@@ -61,6 +61,11 @@ internal object AidJwtVerifier {
 
         return AidUser(
             subject = subject,
+            email = claims.optString("email").takeIf { it.isNotBlank() },
+            name = claims.optString("name").takeIf { it.isNotBlank() },
+            picture = claims.optString("picture").takeIf { it.isNotBlank() },
+            username = claims.optString("preferred_username").takeIf { it.isNotBlank() }
+                ?: claims.optString("username").takeIf { it.isNotBlank() },
             claims = jsonObjectToMap(claims),
         )
     }
