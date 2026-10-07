@@ -38,7 +38,7 @@ class AceID @JvmOverloads constructor(
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
     private val refreshMutex = Mutex()
-    private val loginCallbacks = ConcurrentHashMap.newKeySet<AidSessionCallback>()
+    @Volatile private var activeLoginCallback: AidSessionCallback? = null
     private val accountState = MutableStateFlow<AidUser?>(null)
     private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var memoryDiscovery: Pair<OidcConfiguration, Long>? = null
@@ -123,12 +123,16 @@ class AceID @JvmOverloads constructor(
     }
 
     fun login(context: Context, callback: AidSessionCallback) {
-        loginCallbacks += callback
+        if (activeLoginCallback != null) {
+            dispatchCallback(callback) { onError(AidException("An Ace ID login is already in progress")) }
+            return
+        }
+        activeLoginCallback = callback
         callbackScope.launch {
             try {
                 startAuthorization(context)
             } catch (e: Throwable) {
-                loginCallbacks.remove(callback)
+                if (activeLoginCallback === callback) activeLoginCallback = null
                 dispatchCallback(callback) { onError(e) }
             }
         }
@@ -149,7 +153,7 @@ class AceID @JvmOverloads constructor(
                 }
             }
             login(context, callback)
-            continuation.invokeOnCancellation { loginCallbacks.remove(callback) }
+            continuation.invokeOnCancellation { if (activeLoginCallback === callback) activeLoginCallback = null }
         }
 
     fun handleCallback(context: Context, callbackUri: Uri): AidSession {
@@ -320,7 +324,7 @@ class AceID @JvmOverloads constructor(
 
     suspend fun getAccount(context: Context, cache: Boolean = true): AidUser? =
         withContext(Dispatchers.IO) {
-            val token = getValidAccessToken(context) ?: return@withContext null
+            val token = getValidAccessTokenAsync(context) ?: return@withContext null
             val session = getSession(context) ?: return@withContext null
             val storage = AidSecureStorage(context, normalizedIssuer, clientId)
 
@@ -397,15 +401,15 @@ class AceID @JvmOverloads constructor(
     }
 
     private fun notifyLoginSuccess(session: AidSession) {
-        val callbacks = loginCallbacks.toList()
-        loginCallbacks.clear()
-        callbacks.forEach { callback -> dispatchCallback(callback) { onSuccess(session) } }
+        val callback = activeLoginCallback ?: return
+        activeLoginCallback = null
+        dispatchCallback(callback) { onSuccess(session) }
     }
 
     private fun notifyLoginFailure(error: Throwable) {
-        val callbacks = loginCallbacks.toList()
-        loginCallbacks.clear()
-        callbacks.forEach { callback -> dispatchCallback(callback) { onError(error) } }
+        val callback = activeLoginCallback ?: return
+        activeLoginCallback = null
+        dispatchCallback(callback) { onError(error) }
     }
 
     private fun dispatchCallback(callback: AidSessionCallback, block: AidSessionCallback.() -> Unit) {
