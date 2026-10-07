@@ -130,12 +130,33 @@ class AceID @JvmOverloads constructor(
         activeLoginCallback = callback
         callbackScope.launch {
             try {
-                startAuthorization(context)
+                startAuthorizationAsync(context)
             } catch (e: Throwable) {
                 if (activeLoginCallback === callback) activeLoginCallback = null
                 dispatchCallback(callback) { onError(e) }
             }
         }
+    }
+
+    private suspend fun startAuthorizationAsync(context: Context): AuthorizationRequest {
+        val configuration = withContext(Dispatchers.IO) { discover(context) }
+        val request = createAuthorizationRequest(configuration)
+        withContext(Dispatchers.IO) {
+            AidSecureStorage(context, normalizedIssuer, clientId).put(
+                "transaction",
+                AidTransaction(
+                    state = request.state,
+                    nonce = request.nonce,
+                    codeVerifier = request.codeVerifier,
+                    redirectUri = request.redirectUri,
+                    createdAt = System.currentTimeMillis(),
+                ).toJson(),
+            )
+        }
+        withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(request.url))
+        }
+        return request
     }
 
     suspend fun handleCallbackAsync(context: Context, callbackUri: Uri): AidSession =
