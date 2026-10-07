@@ -150,8 +150,53 @@ The repository also contains a native Kotlin Android SDK under "android/".
 - Compile SDK: API 36
 - Authentication: Authorization Code + PKCE (S256)
 - Distribution: Android Archive (AAR)
+- Core dependency: Kotlin coroutines
 
-The Android SDK is independent of the JavaScript/TypeScript package.
+The Android SDK is authentication/account focused. It does not create clients, applications, programs, or provisioning resources.
+
+Basic Kotlin:
+
+val ace = AceID(
+    issuer = "https://id.example.com",
+    clientId = BuildConfig.ACE_CLIENT_ID,
+    redirectUri = "com.example.app:/oauth/callback"
+)
+
+lifecycleScope.launch {
+    val session = ace.login(this@MainActivity)
+    println(session.user.email)
+}
+
+For callback-based integrations:
+
+ace.login(this) { result ->
+    // Route the callback URI to ace.handleCallbackAsync(...)
+}
+
+lifecycleScope.launch {
+    val account = ace.getAccount(this@MainActivity)
+    val token = ace.getValidAccessTokenAsync(this@MainActivity)
+}
+
+For API calls:
+
+lifecycleScope.launch {
+    ace.withAccessToken(this@MainActivity) { token ->
+        // call your API with the valid token
+    }
+}
+
+Smart defaults include:
+
+- Memory + encrypted disk discovery caching, scoped by issuer and client ID.
+- Short-lived encrypted account caching.
+- Automatic token refresh with refresh-token rotation support.
+- Single-flight refresh for concurrent coroutine callers.
+- Normalized account fields: subject, email, name, picture, username, plus raw claims.
+- Configuration diagnostics through validateConfiguration().
+- Existing synchronous APIs remain available for compatibility.
+
+For HTTPS redirect URIs, Android App Links are preferred when the app owns the domain. They require a verified website association through Digital Asset Links.
 
 Build the Android AAR
 
