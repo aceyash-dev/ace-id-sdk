@@ -1,6 +1,6 @@
 # ace-id-sdk
 
-**Current release: 0.2.1**
+**Current release: 0.2.2**
 
 Official JavaScript/TypeScript SDK for Ace ID, an OpenID Connect (OIDC) identity provider.
 
@@ -115,7 +115,7 @@ Vanilla JavaScript
 
 "ace-id-sdk" can also be loaded directly in a browser without npm or a bundler.
 
-<script src="https://unpkg.com/ace-id-sdk@0.2.1/dist/ace-id-sdk.global.js"></script>
+<script src="https://unpkg.com/ace-id-sdk@0.2.2/dist/ace-id-sdk.global.js"></script>
 
 <script>
   const auth = new AceID.AID({
@@ -145,7 +145,7 @@ Available exports include:
 
 Android
 
-The repository also contains a native Kotlin Android SDK under "android/". The Android SDK is part of the 0.2.1 release line.
+The repository also contains a native Kotlin Android SDK under "android/". The Android SDK is part of the 0.2.2 release line.
 
 - Namespace: "tab.aid.sdk"
 - Minimum Android version: API 23
@@ -208,7 +208,7 @@ For HTTPS redirect URIs, Android App Links are preferred when the app owns the d
 
 Build the Android AAR
 
-The Android AAR workflow is manually triggered from the repository's GitHub Actions tab. Use the `release_tag` input (default `v0.2.1`) to name the artifact.
+The Android AAR workflow is manually triggered from the repository's GitHub Actions tab. Use the `release_tag` input (default `v0.2.2`) to name the artifact.
 
 The Android release workflow does not require a Git tag to trigger an AAR build. The workflow is intentionally manual-only. A successful build uploads the AAR as a workflow artifact; GitHub Release creation is an explicit opt-in input because repository token permissions may restrict release writes.
 
