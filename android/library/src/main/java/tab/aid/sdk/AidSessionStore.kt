@@ -62,11 +62,6 @@ internal class AidSessionStore(
             if (subject.isBlank()) throw AidException("Stored SDK user is missing sub")
             return AidUser(
                 subject = subject,
-                email = value.optString("email").takeIf { it.isNotBlank() },
-                name = value.optString("name").takeIf { it.isNotBlank() },
-                picture = value.optString("picture").takeIf { it.isNotBlank() },
-                username = value.optString("preferred_username").takeIf { it.isNotBlank() }
-                    ?: value.optString("username").takeIf { it.isNotBlank() },
                 claims = jsonObjectToMap(value),
             )
         }
