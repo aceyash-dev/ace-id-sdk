@@ -37,6 +37,7 @@ class AceID @JvmOverloads constructor(
     private val refreshMutex = Mutex()
     private val loginCallbacks = ConcurrentHashMap.newKeySet<AidSessionCallback>()
     private val accountState = MutableStateFlow<AidUser?>(null)
+    @Volatile private var memoryDiscovery: Pair<OidcConfiguration, Long>? = null
 
     companion object {
         const val DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000L
@@ -55,17 +56,12 @@ class AceID @JvmOverloads constructor(
         validateRedirectUri(redirectUri)
     }
 
-    fun discover(): OidcConfiguration = AidDiscoveryCache(
-        context = throwMissingContext(),
-        issuer = normalizedIssuer,
-        clientId = clientId,
-        ttlMs = discoveryCacheTtlMs,
-    ).get()
-
-    private fun throwMissingContext(): Context {
-        throw AidConfigurationException(
-            "discover() now requires Android storage context for persistent caching; use discover(context) or the suspend APIs",
-        )
+    fun discover(): OidcConfiguration {
+        val now = System.currentTimeMillis()
+        memoryDiscovery?.takeIf { it.second > now }?.let { return it.first }
+        val configuration = OidcDiscovery.fetch(normalizedIssuer)
+        memoryDiscovery = configuration to (now + discoveryCacheTtlMs)
+        return configuration
     }
 
     fun discover(context: Context, forceRefresh: Boolean = false): OidcConfiguration =
@@ -384,7 +380,7 @@ class AceID @JvmOverloads constructor(
             AidConfigurationReport(checks)
         }
 
-    private fun discoverWithoutContext(): OidcConfiguration = OidcDiscovery.fetch(normalizedIssuer)
+    private fun discoverWithoutContext(): OidcConfiguration = discover()
 
     fun signOut(context: Context) {
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
