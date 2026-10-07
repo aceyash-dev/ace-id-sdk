@@ -5,7 +5,10 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.browser.customtabs.CustomTabsIntent
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -37,6 +40,7 @@ class AceID @JvmOverloads constructor(
     private val refreshMutex = Mutex()
     private val loginCallbacks = ConcurrentHashMap.newKeySet<AidSessionCallback>()
     private val accountState = MutableStateFlow<AidUser?>(null)
+    private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var memoryDiscovery: Pair<OidcConfiguration, Long>? = null
 
     companion object {
@@ -119,14 +123,19 @@ class AceID @JvmOverloads constructor(
     }
 
     fun login(context: Context, callback: AidSessionCallback) {
-        try {
-            loginCallbacks += callback
-            startAuthorization(context)
-        } catch (e: Throwable) {
-            loginCallbacks.remove(callback)
-            dispatchCallback(callback) { onError(e) }
+        loginCallbacks += callback
+        callbackScope.launch {
+            try {
+                startAuthorization(context)
+            } catch (e: Throwable) {
+                loginCallbacks.remove(callback)
+                dispatchCallback(callback) { onError(e) }
+            }
         }
     }
+
+    suspend fun handleCallbackAsync(context: Context, callbackUri: Uri): AidSession =
+        withContext(Dispatchers.IO) { handleCallback(context, callbackUri) }
 
     suspend fun login(context: Context): AidSession =
         suspendCancellableCoroutine { continuation ->
@@ -331,9 +340,6 @@ class AceID @JvmOverloads constructor(
             account
         }
 
-    fun getAccount(context: Context, cache: Boolean = true): AidUser? =
-        runBlockingCompat { getAccount(context, cache) }
-
     suspend fun restoreSession(context: Context): AidSessionState {
         val session = withContext(Dispatchers.IO) { getSession(context) }
             ?: return AidSessionState.Unauthenticated
@@ -444,8 +450,6 @@ class AceID @JvmOverloads constructor(
             uri.host == "localhost" || uri.host == "127.0.0.1"
         }.getOrDefault(false)
 
-    private fun <T> runBlockingCompat(block: suspend () -> T): T =
-        kotlinx.coroutines.runBlocking(Dispatchers.IO) { block() }
 }
 
 interface AidSessionCallback {
