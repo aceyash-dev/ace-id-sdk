@@ -1,4 +1,4 @@
-# Android SDK 0.2.1
+# Android SDK 0.2.2
 
 The Ace ID Android SDK provides native OpenID Connect authentication and account/session APIs for Android applications.
 
@@ -84,7 +84,7 @@ The Android workflow is intentionally **manual-only**.
 
 In GitHub Actions, run **Android SDK** and choose:
 
-- **release_tag:** `v0.2.1`
+- **release_tag:** `v0.2.2`
 - **publish_release:** `false` to build and upload only the AAR
 - **publish_release:** `true` to also attempt GitHub Release creation
 
@@ -97,7 +97,7 @@ gradle test assemble
 A successful run uploads:
 
 ```text
-ace-id-sdk-android-v0.2.1.aar
+ace-id-sdk-android-v0.2.2.aar
 ```
 
 Release creation is deliberately opt-in. Repository-level GitHub Actions token policy must allow release writes for that step to succeed.
@@ -108,4 +108,4 @@ The Android SDK does not create or manage AIDC clients, applications, programs, 
 
 ## Versioning
 
-This document describes the Android SDK for the **0.2.1** release line.
+This document describes the Android SDK for the **0.2.2** release line.
