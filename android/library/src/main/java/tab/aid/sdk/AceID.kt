@@ -190,6 +190,26 @@ class AceID @JvmOverloads constructor(
 
     fun getUser(context: Context): AidUser? = getSession(context)?.user
 
+    /**
+     * Fetches the authenticated account from the provider's OIDC UserInfo endpoint.
+     *
+     * This is read-only account access. The Android AAR does not provision
+     * clients, applications, or programs.
+     */
+    fun getAccount(context: Context): AidUser? {
+        val session = getSession(context) ?: return null
+        val accessToken = getValidAccessToken(context) ?: return null
+        val expectedSubject = getSession(context)?.user?.subject ?: session.user.subject
+        val endpoint = discover().userInfoEndpoint
+            ?: throw AidDiscoveryException("OIDC provider does not advertise a userinfo endpoint")
+
+        val account = AidTokenClient.fetchUserInfo(endpoint, accessToken)
+        if (account.subject != expectedSubject) {
+            throw AidException("OIDC userinfo subject does not match the current session")
+        }
+        return account
+    }
+
     fun getAccessToken(context: Context): String? = getSession(context)?.tokens?.accessToken
 
     @Synchronized
