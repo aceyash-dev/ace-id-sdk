@@ -40,6 +40,9 @@ public class AceIDJavaApiTest {
         assertTrue(request.getUrl().contains("response_type=code"));
         assertTrue(request.getCodeVerifier().equals("code-verifier"));
         assertTrue(AceID.class.getMethod("getAccount", android.content.Context.class) != null);
+        assertTrue(AceID.class.getMethod("getSessionState", android.content.Context.class, long.class) != null);
+        assertTrue(AceID.class.getMethod("getAccountAsync", android.content.Context.class, kotlin.coroutines.Continuation.class) != null);
+        assertTrue(AceID.class.getMethod("getValidAccessTokenAsync", android.content.Context.class, long.class, kotlin.coroutines.Continuation.class) != null);
         try {
             AceID.class.getMethod("createClient", android.content.Context.class);
             throw new AssertionError("Android AAR must not expose client provisioning");
