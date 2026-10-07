@@ -39,7 +39,6 @@ internal class AidDiscoveryCache(
             if (!forceRefresh && secondChance != null && secondChance.expiresAt > now) {
                 return secondChance.configuration
             }
-
             val disk = if (!forceRefresh) readDisk() else null
             if (disk != null && disk.expiresAt > now) {
                 memory[memoryKey] = disk
@@ -63,11 +62,9 @@ internal class AidDiscoveryCache(
         val raw = runCatching {
             AidSecureStorage(context, normalizedIssuer, clientId).get(KEY)
         }.getOrNull() ?: return null
-
         return runCatching {
             val value = JSONObject(raw)
             val expiresAt = value.getLong("expires_at")
-            if (value.getLong("saved_at") + MAX_CACHE_BYTES < 0) return null
             Entry(parse(value.getJSONObject("configuration")), expiresAt)
         }.getOrNull()
     }
@@ -75,7 +72,6 @@ internal class AidDiscoveryCache(
     private fun writeDisk(entry: Entry) {
         val configuration = entry.configuration
         val json = JSONObject()
-            .put("saved_at", System.currentTimeMillis())
             .put("expires_at", entry.expiresAt)
             .put(
                 "configuration",
