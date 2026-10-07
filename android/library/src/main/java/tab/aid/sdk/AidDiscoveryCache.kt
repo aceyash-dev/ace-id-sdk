@@ -93,7 +93,11 @@ internal class AidDiscoveryCache(
     }
 
     private fun parse(value: JSONObject): OidcConfiguration = OidcConfiguration(
-        issuer = value.getString("issuer"),
+        issuer = value.getString("issuer").also { cachedIssuer ->
+            if (OidcDiscovery.normalizeIssuer(cachedIssuer) != normalizedIssuer) {
+                throw AidDiscoveryException("Cached OIDC issuer does not match the configured issuer")
+            }
+        },
         authorizationEndpoint = value.getString("authorization_endpoint"),
         tokenEndpoint = value.getString("token_endpoint"),
         userInfoEndpoint = value.optString("userinfo_endpoint").takeIf { it.isNotBlank() },
