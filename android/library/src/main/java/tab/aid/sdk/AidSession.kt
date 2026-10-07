@@ -11,12 +11,15 @@ data class AidTokens(
 
 data class AidUser(
     val subject: String,
-    val email: String? = null,
-    val name: String? = null,
-    val picture: String? = null,
-    val username: String? = null,
-    val claims: Map<String, Any?> = emptyMap(),
-)
+    val claims: Map<String, Any?>,
+) {
+    val email: String? get() = claims["email"] as? String
+    val name: String? get() = claims["name"] as? String
+    val picture: String? get() = claims["picture"] as? String
+    val username: String?
+        get() = (claims["preferred_username"] as? String)?.takeIf { it.isNotBlank() }
+            ?: (claims["username"] as? String)?.takeIf { it.isNotBlank() }
+}
 
 data class AidSession(
     val tokens: AidTokens,
