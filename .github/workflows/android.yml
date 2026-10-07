@@ -1,21 +1,12 @@
 name: Android SDK
 
 on:
-  push:
-    branches:
-      - feat/android-native-auth
-    paths:
-      - ".github/workflows/android.yml"
-  pull_request:
-    paths:
-      - "android/**"
-      - ".github/workflows/android.yml"
   workflow_dispatch:
     inputs:
       release_tag:
         description: "GitHub release tag"
         required: true
-        default: "v0.2.0"
+        default: "v0.1.1"
 
 permissions:
   contents: write
@@ -45,7 +36,7 @@ jobs:
 
       - name: Prepare AAR
         env:
-          RELEASE_TAG: ${{ github.event_name == 'push' && 'v0.1.1' || inputs.release_tag }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           mkdir -p release
           cp android/library/build/outputs/aar/library-release.aar "${{ github.workspace }}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
@@ -58,7 +49,7 @@ jobs:
 
   release:
     needs: build
-    if: ${{ needs.build.result == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ needs.build.result == 'success' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -71,8 +62,7 @@ jobs:
       - name: Create GitHub release and upload AAR
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event_name == 'push' && 'v0.1.1' || inputs.release_tag }}
-          RELEASE_TARGET: ${{ github.event_name == 'push' && 'eeea16b555935c92c7ec071ecc26eb0648bc11b3' || github.sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           test -f "release/ace-id-sdk-android-${RELEASE_TAG}.aar"
-          gh release create "${RELEASE_TAG}"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "${GITHUB_REPOSITORY}"             --target "${RELEASE_TARGET}"             --title "Android SDK ${RELEASE_TAG}"             --generate-notes
+          gh release create "${RELEASE_TAG}"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "${GITHUB_REPOSITORY}"             --target "${GITHUB_SHA}"             --title "Android SDK ${RELEASE_TAG}"             --generate-notes
