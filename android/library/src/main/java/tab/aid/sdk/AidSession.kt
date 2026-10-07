@@ -11,7 +11,11 @@ data class AidTokens(
 
 data class AidUser(
     val subject: String,
-    val claims: Map<String, Any?>,
+    val email: String? = null,
+    val name: String? = null,
+    val picture: String? = null,
+    val username: String? = null,
+    val claims: Map<String, Any?> = emptyMap(),
 )
 
 data class AidSession(
