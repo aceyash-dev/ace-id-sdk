@@ -6,4 +6,5 @@ coverage/
 .env
 .env.*
 !.env.example
-test/\ntest-app/\n
+test/
+test-app/
