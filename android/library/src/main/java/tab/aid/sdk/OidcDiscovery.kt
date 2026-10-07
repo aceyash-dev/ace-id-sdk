@@ -19,7 +19,10 @@ internal object OidcDiscovery {
             .toString().trimEnd('/')
     }
 
-    fun fetch(issuer: String): OidcConfiguration {
+    fun fetch(issuer: String): OidcConfiguration =
+        AidSdkRuntime.discovery(issuer) { fetchUncached(issuer) }
+
+    private fun fetchUncached(issuer: String): OidcConfiguration {
         val normalized = normalizeIssuer(issuer)
         val endpoint = normalized + "/.well-known/openid-configuration"
         val connection = try {
