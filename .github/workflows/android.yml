@@ -1,6 +1,10 @@
 name: Android SDK
 
 on:
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -47,7 +51,7 @@ jobs:
 
   release:
     needs: build
-    if: ${{ needs.build.result == 'success' }}
+    if: ${{ needs.build.result == 'success' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
 
     steps:
