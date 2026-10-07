@@ -2,25 +2,46 @@ package tab.aid.sdk
 
 import android.content.Context
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.browser.customtabs.CustomTabsIntent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.security.MessageDigest
+import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * Android entry point for ace-id-sdk.
+ * Native Android entry point for ace-id-sdk.
  *
- * Network and cryptographic operations are synchronous and must not run on
- * the Android main thread.
+ * Synchronous methods are retained for compatibility. New application code should
+ * prefer the suspend APIs so all blocking network and crypto work runs on IO.
  */
 class AceID @JvmOverloads constructor(
     val issuer: String,
     val clientId: String,
     val redirectUri: String,
     val scope: String = "openid profile email",
+    val discoveryCacheTtlMs: Long = DEFAULT_DISCOVERY_CACHE_TTL_MS,
+    val accountCacheTtlMs: Long = DEFAULT_ACCOUNT_CACHE_TTL_MS,
+    val tokenLeewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
+    private val refreshMutex = Mutex()
+    private val loginCallbacks = ConcurrentHashMap.newKeySet<AidSessionCallback>()
+    private val accountState = MutableStateFlow<AidUser?>(null)
 
     companion object {
         const val DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000L
+        const val DEFAULT_DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
+        const val DEFAULT_ACCOUNT_CACHE_TTL_MS = 30 * 1000L
         const val DEFAULT_TOKEN_LEEWAY_SECONDS = 60L
     }
 
@@ -28,13 +49,29 @@ class AceID @JvmOverloads constructor(
         if (clientId.isBlank()) throw AidConfigurationException("clientId must not be blank")
         if (redirectUri.isBlank()) throw AidConfigurationException("redirectUri must not be blank")
         if (scope.isBlank()) throw AidConfigurationException("scope must not be blank")
+        if (discoveryCacheTtlMs <= 0) throw AidConfigurationException("discoveryCacheTtlMs must be > 0")
+        if (accountCacheTtlMs < 0) throw AidConfigurationException("accountCacheTtlMs must not be negative")
+        if (tokenLeewaySeconds < 0) throw AidConfigurationException("tokenLeewaySeconds must not be negative")
+        validateRedirectUri(redirectUri)
     }
 
-    fun discover(): OidcConfiguration = OidcDiscovery.fetch(normalizedIssuer)
+    fun discover(): OidcConfiguration = AidDiscoveryCache(
+        context = throwMissingContext(),
+        issuer = normalizedIssuer,
+        clientId = clientId,
+        ttlMs = discoveryCacheTtlMs,
+    ).get()
 
-    fun createAuthorizationRequest(
-        configuration: OidcConfiguration,
-    ): AuthorizationRequest {
+    private fun throwMissingContext(): Context {
+        throw AidConfigurationException(
+            "discover() now requires Android storage context for persistent caching; use discover(context) or the suspend APIs",
+        )
+    }
+
+    fun discover(context: Context, forceRefresh: Boolean = false): OidcConfiguration =
+        AidDiscoveryCache(context, normalizedIssuer, clientId, discoveryCacheTtlMs).get(forceRefresh)
+
+    fun createAuthorizationRequest(configuration: OidcConfiguration): AuthorizationRequest {
         require(configuration.issuer == normalizedIssuer) {
             "OIDC configuration issuer does not match this client"
         }
@@ -65,18 +102,11 @@ class AceID @JvmOverloads constructor(
         return AuthorizationRequest(url, state, nonce, codeVerifier, redirectUri)
     }
 
-    /**
-     * Stores the PKCE transaction and opens the provider in an Android Custom Tab.
-     *
-     * The application must register [redirectUri] and pass the resulting callback
-     * URI to [handleCallback].
-     */
     @JvmOverloads
     fun startAuthorization(
         context: Context,
-        configuration: OidcConfiguration = discover(),
+        configuration: OidcConfiguration = discover(context),
     ): AuthorizationRequest {
-
         val request = createAuthorizationRequest(configuration)
         AidSecureStorage(context, normalizedIssuer, clientId).put(
             "transaction",
@@ -88,29 +118,45 @@ class AceID @JvmOverloads constructor(
                 createdAt = System.currentTimeMillis(),
             ).toJson(),
         )
-
-        CustomTabsIntent.Builder()
-            .build()
-            .launchUrl(context, Uri.parse(request.url))
-
+        CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(request.url))
         return request
     }
 
-    /**
-     * Validates the authorization response, exchanges the code, verifies the
-     * ID token, and persists the authenticated session.
-     */
-    fun handleCallback(
-        context: Context,
-        callbackUri: Uri,
-    ): AidSession {
+    fun login(context: Context, callback: AidSessionCallback) {
+        try {
+            loginCallbacks += callback
+            startAuthorization(context)
+        } catch (e: Throwable) {
+            loginCallbacks.remove(callback)
+            dispatchCallback(callback) { onError(e) }
+        }
+    }
+
+    suspend fun login(context: Context): AidSession =
+        suspendCancellableCoroutine { continuation ->
+            val callback = object : AidSessionCallback {
+                override fun onSuccess(session: AidSession) {
+                    if (continuation.isActive) continuation.resume(session)
+                }
+
+                override fun onError(error: Throwable) {
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
+            }
+            login(context, callback)
+            continuation.invokeOnCancellation { loginCallbacks.remove(callback) }
+        }
+
+    fun handleCallback(context: Context, callbackUri: Uri): AidSession {
         val error = callbackUri.getQueryParameter("error")
         if (!error.isNullOrBlank()) {
             val description = callbackUri.getQueryParameter("error_description")
-            throw AidException(
+            val exception = AidException(
                 "OIDC authorization failed: $error" +
                     (description?.let { ": $it" } ?: ""),
             )
+            notifyLoginFailure(exception)
+            throw exception
         }
 
         val code = callbackUri.getQueryParameter("code")
@@ -146,11 +192,11 @@ class AceID @JvmOverloads constructor(
             throw AidException("Unexpected redirect_uri parameter in authorization callback")
         }
 
-        val configuration = discover()
         if (transaction.redirectUri != redirectUri) {
             throw AidException("Authorization transaction redirect URI does not match this client")
         }
 
+        val configuration = discover(context)
         val tokens = AidTokenClient.exchangeCode(
             configuration = configuration,
             clientId = clientId,
@@ -172,6 +218,8 @@ class AceID @JvmOverloads constructor(
         val session = AidSession(tokens = tokens, user = user)
         AidSessionStore(storage).save(session)
         storage.remove("transaction")
+        accountState.value = user
+        notifyLoginSuccess(session)
         return session
     }
 
@@ -181,7 +229,7 @@ class AceID @JvmOverloads constructor(
     @JvmOverloads
     fun isAuthenticated(
         context: Context,
-        leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+        leewaySeconds: Long = tokenLeewaySeconds,
     ): Boolean {
         val session = getSession(context) ?: return false
         val expiresAt = session.tokens.expiresAt ?: return true
@@ -192,11 +240,10 @@ class AceID @JvmOverloads constructor(
 
     fun getAccessToken(context: Context): String? = getSession(context)?.tokens?.accessToken
 
-    @Synchronized
     @JvmOverloads
     fun getValidAccessToken(
         context: Context,
-        leewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+        leewaySeconds: Long = tokenLeewaySeconds,
     ): String? {
         require(leewaySeconds >= 0) { "leewaySeconds must not be negative" }
 
@@ -210,10 +257,18 @@ class AceID @JvmOverloads constructor(
             return session.tokens.accessToken
         }
 
+        return refreshSession(context, session, store, storage).tokens.accessToken
+    }
+
+    private fun refreshSession(
+        context: Context,
+        session: AidSession,
+        store: AidSessionStore,
+        storage: AidSecureStorage,
+    ): AidSession {
         val refreshToken = session.tokens.refreshToken
             ?: throw AidException("Access token has expired and no refresh token is available")
-
-        val configuration = discover()
+        val configuration = discover(context)
         if (
             configuration.grantTypesSupported.isNotEmpty() &&
             !configuration.grantTypesSupported.contains("refresh_token")
@@ -229,31 +284,175 @@ class AceID @JvmOverloads constructor(
         )
 
         var user = session.user
-        val verifiedIdToken = refreshed.idToken
-        if (verifiedIdToken != null) {
-            val refreshedUser = AidJwtVerifier.verify(
-                jwt = verifiedIdToken,
-                configuration = configuration,
-                clientId = clientId,
-            )
+        refreshed.idToken?.let { token ->
+            val refreshedUser = AidJwtVerifier.verify(token, configuration, clientId)
             if (refreshedUser.subject != session.user.subject) {
                 throw AidException("Refreshed ID token subject does not match the current session")
             }
             user = refreshedUser
         }
 
-        val updatedTokens = refreshed.copy(
-            refreshToken = refreshed.refreshToken ?: refreshToken,
-            idToken = refreshed.idToken ?: session.tokens.idToken,
+        val updated = AidSession(
+            tokens = refreshed.copy(
+                refreshToken = refreshed.refreshToken ?: refreshToken,
+                idToken = refreshed.idToken ?: session.tokens.idToken,
+            ),
+            user = user,
         )
-        val updatedSession = AidSession(tokens = updatedTokens, user = user)
-        store.save(updatedSession)
-        return updatedTokens.accessToken
+        store.save(updated)
+        accountState.value = user
+        return updated
     }
+
+    suspend fun getValidAccessTokenAsync(
+        context: Context,
+        leewaySeconds: Long = tokenLeewaySeconds,
+    ): String? = refreshMutex.withLock {
+        withContext(Dispatchers.IO) {
+            getValidAccessToken(context, leewaySeconds)
+        }
+    }
+
+    suspend fun getAccount(context: Context, cache: Boolean = true): AidUser? =
+        withContext(Dispatchers.IO) {
+            val token = getValidAccessToken(context) ?: return@withContext null
+            val session = getSession(context) ?: return@withContext null
+            val storage = AidSecureStorage(context, normalizedIssuer, clientId)
+
+            if (cache) {
+                readAccountCache(storage, session.user.subject)?.let {
+                    accountState.value = it
+                    return@withContext it
+                }
+            }
+
+            val account = AidAccountClient.fetch(discover(context), token)
+            if (account.subject != session.user.subject) {
+                throw AidException("UserInfo subject does not match the current session")
+            }
+            writeAccountCache(storage, account)
+            accountState.value = account
+            account
+        }
+
+    fun getAccount(context: Context, cache: Boolean = true): AidUser? =
+        runBlockingCompat { getAccount(context, cache) }
+
+    suspend fun restoreSession(context: Context): AidSessionState {
+        val session = withContext(Dispatchers.IO) { getSession(context) }
+            ?: return AidSessionState.Unauthenticated
+        return runCatching {
+            val token = getValidAccessTokenAsync(context)
+            if (token == null) AidSessionState.Unauthenticated
+            else AidSessionState.Authenticated(getUser(context) ?: session.user)
+        }.getOrElse { AidSessionState.Expired }
+    }
+
+    fun account(context: Context): StateFlow<AidUser?> {
+        accountState.value = getUser(context)
+        return accountState
+    }
+
+    suspend fun <T> withAccessToken(
+        context: Context,
+        block: suspend (String) -> T,
+    ): T {
+        val token = getValidAccessTokenAsync(context)
+            ?: throw AidException("No authenticated Ace ID session")
+        return block(token)
+    }
+
+    suspend fun validateConfiguration(): AidConfigurationReport =
+        withContext(Dispatchers.IO) {
+            val checks = mutableListOf<AidConfigurationCheck>()
+            checks += AidConfigurationCheck("HTTPS issuer", issuer.startsWith("https://") || isLocalhostIssuer(), issuer)
+            checks += AidConfigurationCheck("Redirect URI", runCatching { validateRedirectUri(redirectUri); true }.getOrDefault(false), redirectUri)
+            val discovery = runCatching { discoverWithoutContext() }
+            discovery.fold(
+                onSuccess = { configuration ->
+                    checks += AidConfigurationCheck("OIDC discovery", true, "Discovery succeeded")
+                    checks += AidConfigurationCheck("Authorization endpoint", configuration.authorizationEndpoint.isNotBlank(), configuration.authorizationEndpoint)
+                    checks += AidConfigurationCheck("Token endpoint", configuration.tokenEndpoint.isNotBlank(), configuration.tokenEndpoint)
+                    checks += AidConfigurationCheck("UserInfo endpoint", !configuration.userInfoEndpoint.isNullOrBlank(), configuration.userInfoEndpoint ?: "missing")
+                    checks += AidConfigurationCheck("JWKS URI", !configuration.jwksUri.isNullOrBlank(), configuration.jwksUri ?: "missing")
+                    checks += AidConfigurationCheck("PKCE S256", configuration.codeChallengeMethodsSupported.isEmpty() || configuration.codeChallengeMethodsSupported.contains("S256"), "S256")
+                },
+                onFailure = { error ->
+                    checks += AidConfigurationCheck("OIDC discovery", false, error.message ?: "Discovery failed")
+                },
+            )
+            AidConfigurationReport(checks)
+        }
+
+    private fun discoverWithoutContext(): OidcConfiguration = OidcDiscovery.fetch(normalizedIssuer)
 
     fun signOut(context: Context) {
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         storage.remove("session")
         storage.remove("transaction")
+        storage.remove("account")
+        accountState.value = null
     }
+
+    private fun notifyLoginSuccess(session: AidSession) {
+        val callbacks = loginCallbacks.toList()
+        loginCallbacks.clear()
+        callbacks.forEach { callback -> dispatchCallback(callback) { onSuccess(session) } }
+    }
+
+    private fun notifyLoginFailure(error: Throwable) {
+        val callbacks = loginCallbacks.toList()
+        loginCallbacks.clear()
+        callbacks.forEach { callback -> dispatchCallback(callback) { onError(error) } }
+    }
+
+    private fun dispatchCallback(callback: AidSessionCallback, block: AidSessionCallback.() -> Unit) {
+        Handler(Looper.getMainLooper()).post { callback.block() }
+    }
+
+    private fun readAccountCache(storage: AidSecureStorage, expectedSubject: String): AidUser? {
+        val raw = storage.get("account") ?: return null
+        return runCatching {
+            val value = org.json.JSONObject(raw)
+            if (value.getLong("expires_at") <= System.currentTimeMillis()) return null
+            val user = AidSessionStore.userFromJson(value.getJSONObject("user"))
+            if (user.subject != expectedSubject) null else user
+        }.getOrNull()
+    }
+
+    private fun writeAccountCache(storage: AidSecureStorage, user: AidUser) {
+        if (accountCacheTtlMs == 0L) return
+        val value = org.json.JSONObject()
+            .put("expires_at", System.currentTimeMillis() + accountCacheTtlMs)
+            .put("user", AidSessionStore.userToJson(user))
+        storage.put("account", value.toString())
+    }
+
+    private fun validateRedirectUri(value: String) {
+        val uri = try { URI(value) } catch (e: Exception) {
+            throw AidConfigurationException("redirectUri is not a valid URI")
+        }
+        if (uri.fragment != null) throw AidConfigurationException("redirectUri must not contain a fragment")
+        if (uri.scheme.isNullOrBlank()) throw AidConfigurationException("redirectUri must include a scheme")
+        if (uri.scheme == "https" && uri.host.isNullOrBlank()) {
+            throw AidConfigurationException("HTTPS redirectUri must include a host")
+        }
+        if (uri.scheme == "http" && uri.host != "localhost" && uri.host != "127.0.0.1") {
+            throw AidConfigurationException("HTTP redirectUri is only allowed for localhost development")
+        }
+    }
+
+    private fun isLocalhostIssuer(): Boolean =
+        runCatching {
+            val uri = URI(issuer)
+            uri.host == "localhost" || uri.host == "127.0.0.1"
+        }.getOrDefault(false)
+
+    private fun <T> runBlockingCompat(block: suspend () -> T): T =
+        kotlinx.coroutines.runBlocking(Dispatchers.IO) { block() }
+}
+
+interface AidSessionCallback {
+    fun onSuccess(session: AidSession)
+    fun onError(error: Throwable)
 }
