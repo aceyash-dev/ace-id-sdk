@@ -6,7 +6,7 @@ on:
       release_tag:
         description: "GitHub release tag"
         required: true
-        default: "v0.2.1"
+        default: "v0.2.2"
       publish_release:
         description: "Create a GitHub Release after a successful AAR build"
         required: true
