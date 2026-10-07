@@ -169,8 +169,9 @@ lifecycleScope.launch {
 
 For callback-based integrations:
 
-ace.login(this) { result ->
-    // Route the callback URI to ace.handleCallbackAsync(...)
+ace.login(this) { session ->
+    // Authentication has started; route the callback URI to
+    // ace.handleCallbackAsync(...) when your redirect Activity receives it.
 }
 
 lifecycleScope.launch {
@@ -185,6 +186,11 @@ lifecycleScope.launch {
         // call your API with the valid token
     }
 }
+
+Compose/state integration is headless and requires no Compose dependency:
+
+val account by ace.account.collectAsState()
+val sessionState by ace.sessionState.collectAsState()
 
 Smart defaults include:
 
