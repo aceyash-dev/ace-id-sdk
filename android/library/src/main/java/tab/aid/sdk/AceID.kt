@@ -40,6 +40,7 @@ class AceID @JvmOverloads constructor(
     private val refreshMutex = Mutex()
     @Volatile private var activeLoginCallback: AidSessionCallback? = null
     private val accountState = MutableStateFlow<AidUser?>(null)
+    private val sessionStateFlow = MutableStateFlow<AidSessionState>(AidSessionState.Unauthenticated)
     private val callbackScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var memoryDiscovery: Pair<OidcConfiguration, Long>? = null
 
@@ -249,6 +250,7 @@ class AceID @JvmOverloads constructor(
         AidSessionStore(storage).save(session)
         storage.remove("transaction")
         accountState.value = user
+        sessionStateFlow.value = AidSessionState.Authenticated(user)
         notifyLoginSuccess(session)
         return session
     }
@@ -266,7 +268,7 @@ class AceID @JvmOverloads constructor(
         return expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds
     }
 
-    fun getUser(context: Context): AidUser? = getSession(context)?.user
+    fun getUser(context: Context): AidUser? = getSession(context)?.user.also { accountState.value = it }
 
     fun getAccessToken(context: Context): String? = getSession(context)?.tokens?.accessToken
 
@@ -331,6 +333,7 @@ class AceID @JvmOverloads constructor(
         )
         store.save(updated)
         accountState.value = user
+        sessionStateFlow.value = AidSessionState.Authenticated(user)
         return updated
     }
 
@@ -352,6 +355,7 @@ class AceID @JvmOverloads constructor(
             if (cache) {
                 readAccountCache(storage, session.user.subject)?.let {
                     accountState.value = it
+                    sessionStateFlow.value = AidSessionState.Authenticated(it)
                     return@withContext it
                 }
             }
@@ -362,23 +366,22 @@ class AceID @JvmOverloads constructor(
             }
             writeAccountCache(storage, account)
             accountState.value = account
+            sessionStateFlow.value = AidSessionState.Authenticated(account)
             account
         }
 
     suspend fun restoreSession(context: Context): AidSessionState {
         val session = withContext(Dispatchers.IO) { getSession(context) }
-            ?: return AidSessionState.Unauthenticated
+            ?: return AidSessionState.Unauthenticated.also { sessionStateFlow.value = it }
         return runCatching {
             val token = getValidAccessTokenAsync(context)
             if (token == null) AidSessionState.Unauthenticated
             else AidSessionState.Authenticated(getUser(context) ?: session.user)
-        }.getOrElse { AidSessionState.Expired }
+        }.getOrElse { AidSessionState.Expired }.also { sessionStateFlow.value = it }
     }
 
-    fun account(context: Context): StateFlow<AidUser?> {
-        accountState.value = getUser(context)
-        return accountState
-    }
+    val account: StateFlow<AidUser?> get() = accountState
+    val sessionState: StateFlow<AidSessionState> get() = sessionStateFlow
 
     suspend fun <T> withAccessToken(
         context: Context,
@@ -419,6 +422,7 @@ class AceID @JvmOverloads constructor(
         storage.remove("transaction")
         storage.remove("account")
         accountState.value = null
+        sessionStateFlow.value = AidSessionState.Unauthenticated
     }
 
     private fun notifyLoginSuccess(session: AidSession) {
