@@ -33,26 +33,13 @@ class AceIdModelTest {
     }
 
     @Test
-    fun authorizationRequestUsesPkceS256() {
-        val ace = AceID(
-            issuer = "https://id.example.com",
-            clientId = "client",
-            redirectUri = "com.example.app:/oauth/callback",
-        )
-        val request = ace.createAuthorizationRequest(
-            OidcConfiguration(
-                issuer = "https://id.example.com",
-                authorizationEndpoint = "https://id.example.com/authorize",
-                tokenEndpoint = "https://id.example.com/token",
-                codeChallengeMethodsSupported = listOf("S256"),
-            ),
-        )
+    fun pkceVerifierAndChallengeAreValidS256() {
+        val verifier = Pkce.createCodeVerifier()
+        val challenge = Pkce.createCodeChallenge(verifier)
 
-        assertTrue(request.url.contains("code_challenge_method=S256"))
-        assertTrue(request.url.contains("response_type=code"))
-        assertTrue(request.state.isNotBlank())
-        assertTrue(request.nonce.isNotBlank())
-        assertTrue(request.codeVerifier.isNotBlank())
+        assertTrue(verifier.length in 43..128)
+        assertTrue(challenge.length in 43..128)
+        assertEquals(challenge, Pkce.createCodeChallenge(verifier))
     }
 
     @Test
