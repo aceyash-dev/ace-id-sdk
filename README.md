@@ -1,6 +1,7 @@
 # ace-id-sdk
 
 **Current release: 0.2.1**
+
 Official JavaScript/TypeScript SDK for Ace ID, an OpenID Connect (OIDC) identity provider.
 
 Install
