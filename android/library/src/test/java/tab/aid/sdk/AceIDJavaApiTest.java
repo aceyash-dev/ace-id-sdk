@@ -39,5 +39,24 @@ public class AceIDJavaApiTest {
         assertTrue(client.getRedirectUri().equals("com.example.app:/oauth/callback"));
         assertTrue(request.getUrl().contains("response_type=code"));
         assertTrue(request.getCodeVerifier().equals("code-verifier"));
+        assertTrue(AceID.class.getMethod("getAccount", android.content.Context.class) != null);
+        try {
+            AceID.class.getMethod("createClient", android.content.Context.class);
+            throw new AssertionError("Android AAR must not expose client provisioning");
+        } catch (NoSuchMethodException expected) {
+            // Expected: provisioning is outside the AAR boundary.
+        }
+        try {
+            AceID.class.getMethod("createApplication", android.content.Context.class);
+            throw new AssertionError("Android AAR must not expose application provisioning");
+        } catch (NoSuchMethodException expected) {
+            // Expected: provisioning is outside the AAR boundary.
+        }
+        try {
+            AceID.class.getMethod("createProgram", android.content.Context.class);
+            throw new AssertionError("Android AAR must not expose program provisioning");
+        } catch (NoSuchMethodException expected) {
+            // Expected: provisioning is outside the AAR boundary.
+        }
     }
 }
