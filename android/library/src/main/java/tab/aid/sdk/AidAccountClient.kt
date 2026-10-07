@@ -6,13 +6,9 @@ import java.net.HttpURLConnection
 import java.net.URI
 
 internal object AidAccountClient {
-    fun fetch(
-        configuration: OidcConfiguration,
-        accessToken: String,
-    ): AidUser {
+    fun fetch(configuration: OidcConfiguration, accessToken: String): AidUser {
         val endpoint = configuration.userInfoEndpoint
             ?: throw AidDiscoveryException("OIDC discovery document is missing userinfo_endpoint")
-
         val connection = try {
             URI(endpoint).toURL().openConnection() as HttpURLConnection
         } catch (e: Exception) {
@@ -26,25 +22,14 @@ internal object AidAccountClient {
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Authorization", "Bearer $accessToken")
             val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
-                throw AidException("OIDC UserInfo request failed: HTTP $responseCode")
-            }
+            if (responseCode !in 200..299) throw AidException("OIDC UserInfo request failed: HTTP $responseCode")
             val json = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
             val value = try { JSONObject(json) } catch (e: Exception) {
                 throw AidException("OIDC UserInfo response is not valid JSON", e)
             }
             val subject = value.optString("sub")
             if (subject.isBlank()) throw AidException("OIDC UserInfo response is missing sub")
-            return AidUser(
-                subject = subject,
-                email = value.optString("email").takeIf { it.isNotBlank() },
-                name = value.optString("name").takeIf { it.isNotBlank() },
-                picture = value.optString("picture").takeIf { it.isNotBlank() },
-                username = value.optString("preferred_username")
-                    .takeIf { it.isNotBlank() }
-                    ?: value.optString("username").takeIf { it.isNotBlank() },
-                claims = jsonObjectToMap(value),
-            )
+            return AidUser(subject = subject, claims = jsonObjectToMap(value))
         } catch (e: AidException) {
             throw e
         } catch (e: Exception) {
