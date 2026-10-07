@@ -6,7 +6,12 @@ on:
       release_tag:
         description: "GitHub release tag"
         required: true
-        default: "v0.2.0"
+        default: "v0.2.2"
+      publish_release:
+        description: "Create a GitHub Release after a successful AAR build"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -35,9 +40,11 @@ jobs:
         run: gradle test assemble
 
       - name: Prepare AAR
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           mkdir -p release
-          cp android/library/build/outputs/aar/library-release.aar "${{ github.workspace }}/release/ace-id-sdk-android-${{ inputs.release_tag }}.aar"
+          cp android/library/build/outputs/aar/library-release.aar "${{ github.workspace }}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
@@ -47,7 +54,7 @@ jobs:
 
   release:
     needs: build
-    if: ${{ needs.build.result == 'success' }}
+    if: ${{ needs.build.result == 'success' && inputs.publish_release }}
     runs-on: ubuntu-latest
 
     steps:
@@ -63,4 +70,4 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           test -f "release/ace-id-sdk-android-${RELEASE_TAG}.aar"
-          gh release create "$RELEASE_TAG"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "Android SDK $RELEASE_TAG"             --generate-notes
+          gh release create "${RELEASE_TAG}"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "${GITHUB_REPOSITORY}"             --target "${GITHUB_SHA}"             --title "Android SDK ${RELEASE_TAG}"             --generate-notes

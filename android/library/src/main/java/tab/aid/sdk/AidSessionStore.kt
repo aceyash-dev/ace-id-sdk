@@ -13,12 +13,11 @@ internal class AidSessionStore(
             .put("refresh_token", session.tokens.refreshToken)
             .put("id_token", session.tokens.idToken)
             .put("scope", session.tokens.scope)
-
         storage.put(
             "session",
             JSONObject()
                 .put("tokens", tokens)
-                .put("user", JSONObject(session.user.claims))
+                .put("user", userToJson(session.user))
                 .toString(),
         )
     }
@@ -28,10 +27,7 @@ internal class AidSessionStore(
         return try {
             val value = JSONObject(raw)
             val tokens = value.getJSONObject("tokens")
-            val user = value.getJSONObject("user")
-            val subject = user.optString("sub")
-            if (subject.isBlank()) return null
-
+            val user = userFromJson(value.getJSONObject("user"))
             AidSession(
                 tokens = AidTokens(
                     accessToken = tokens.getString("access_token"),
@@ -41,10 +37,7 @@ internal class AidSessionStore(
                     idToken = tokens.optString("id_token").takeIf { it.isNotBlank() },
                     scope = tokens.optString("scope").takeIf { it.isNotBlank() },
                 ),
-                user = AidUser(
-                    subject = subject,
-                    claims = jsonObjectToMap(user),
-                ),
+                user = user,
             )
         } catch (e: Exception) {
             throw AidException("Stored SDK session is invalid", e)
@@ -55,20 +48,39 @@ internal class AidSessionStore(
         storage.remove("session")
     }
 
-    private fun jsonObjectToMap(value: JSONObject): Map<String, Any?> {
-        val result = linkedMapOf<String, Any?>()
-        val iterator = value.keys()
-        while (iterator.hasNext()) {
-            val key = iterator.next()
-            result[key] = jsonValueToKotlin(value.opt(key))
-        }
-        return result
-    }
+    companion object {
+        internal fun userToJson(user: AidUser): JSONObject =
+            JSONObject(user.claims)
+                .put("sub", user.subject)
+                .put("email", user.email)
+                .put("name", user.name)
+                .put("picture", user.picture)
+                .put("preferred_username", user.username)
 
-    private fun jsonValueToKotlin(value: Any?): Any? = when (value) {
-        null, JSONObject.NULL -> null
-        is JSONObject -> jsonObjectToMap(value)
-        is org.json.JSONArray -> (0 until value.length()).map { jsonValueToKotlin(value.opt(it)) }
-        else -> value
+        internal fun userFromJson(value: JSONObject): AidUser {
+            val subject = value.optString("sub")
+            if (subject.isBlank()) throw AidException("Stored SDK user is missing sub")
+            return AidUser(
+                subject = subject,
+                claims = jsonObjectToMap(value),
+            )
+        }
+
+        private fun jsonObjectToMap(value: JSONObject): Map<String, Any?> {
+            val result = linkedMapOf<String, Any?>()
+            val iterator = value.keys()
+            while (iterator.hasNext()) {
+                val key = iterator.next()
+                result[key] = jsonValueToKotlin(value.opt(key))
+            }
+            return result
+        }
+
+        private fun jsonValueToKotlin(value: Any?): Any? = when (value) {
+            null, JSONObject.NULL -> null
+            is JSONObject -> jsonObjectToMap(value)
+            is org.json.JSONArray -> (0 until value.length()).map { jsonValueToKotlin(value.opt(it)) }
+            else -> value
+        }
     }
 }
