@@ -448,7 +448,7 @@ public final class AceIDClient {
     }
 
     /// Revokes refresh and access tokens through the provider's advertised RFC 7009 endpoint.
-    /// Local state is cleared only after all applicable remote revocations succeed.
+    /// Local state is cleared before network revocation so a failed request cannot restore a local session.
     public func revokeTokens(completion: @escaping (Result<Void, Error>) -> Void) {
         do {
             guard let state = try loadAuthState(),
@@ -522,18 +522,25 @@ public final class AceIDClient {
         var discoveryURL = issuer
         discoveryURL.appendPathComponent(".well-known")
         discoveryURL.appendPathComponent("openid-configuration")
-        URLSession.shared.dataTask(with: discoveryURL) { data, response, error in
+        var request = URLRequest(
+            url: discoveryURL,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 10
+        )
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        URLSession.shared.dataTask(with: request) { data, response, error in
             let result: Result<URL, Error>
             if let error {
                 result = .failure(error)
             } else if let response = response as? HTTPURLResponse,
                       (200...299).contains(response.statusCode),
-                      let data,
+                      let data, data.count <= 1_000_000,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let issuerString = json["issuer"] as? String,
                       issuerString == issuer.absoluteString,
                       let endpointString = json["revocation_endpoint"] as? String,
                       let endpoint = URL(string: endpointString),
+                      endpoint.host != nil,
                       endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
                       (endpoint.scheme?.lowercased() == "https" || Self.isLoopbackHTTP(endpoint)) {
                 result = .success(endpoint)
@@ -551,7 +558,7 @@ public final class AceIDClient {
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         guard index < tokens.count else { completion(.success(())); return }
-        var request = URLRequest(url: endpoint)
+        var request = URLRequest(url: endpoint, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
