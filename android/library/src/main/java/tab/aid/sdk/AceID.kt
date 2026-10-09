@@ -186,13 +186,19 @@ class AceID @JvmOverloads constructor(
             ?: throw AidException("Authorization callback is missing state")
 
         val transactionJson = storage.get("transaction")
-            ?: throw AidException("No pending authorization transaction")
+            ?: run {
+                val error = AidException("No pending authorization transaction")
+                notifyLoginFailure(error)
+                throw error
+            }
         val transaction = try {
             AidTransaction.fromJson(transactionJson)
         } catch (error: Exception) {
             // A malformed local transaction cannot be safely matched to this callback.
             storage.remove("transaction")
-            throw AidException("Stored authorization transaction is invalid", error)
+            val failure = AidException("Stored authorization transaction is invalid", error)
+            notifyLoginFailure(failure)
+            throw failure
         }
 
         if (!MessageDigest.isEqual(
