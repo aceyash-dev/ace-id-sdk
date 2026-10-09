@@ -12,6 +12,12 @@ class OidcDiscoveryTest {
     }
 
     @Test
+    fun normalizesCaseAndSupportsIPv6Loopback() {
+        assertEquals("https://issuer.example.com", OidcDiscovery.normalizeIssuer("HTTPS://ISSUER.EXAMPLE.COM/"))
+        assertEquals("http://[::1]:8080", OidcDiscovery.normalizeIssuer("http://[::1]:8080/"))
+    }
+
+    @Test
     fun issuerRejectsQueriesFragmentsAndCredentials() {
         listOf(
             "https://user@issuer.example.com",
@@ -29,6 +35,18 @@ class OidcDiscoveryTest {
             OidcDiscovery.normalizeIssuer("http://issuer.example.com")
         }
         assertEquals("http://localhost:8080", OidcDiscovery.normalizeIssuer("http://localhost:8080/"))
+    }
+
+    @Test
+    fun acceptsCaseInsensitiveHttpsEndpointSchemes() {
+        val issuer = "https://issuer.example.com"
+        val json = JSONObject()
+            .put("issuer", issuer)
+            .put("authorization_endpoint", "HTTPS://issuer.example.com/authorize")
+            .put("token_endpoint", "HTTPS://issuer.example.com/token")
+            .toString()
+        val configuration = OidcDiscovery.parse(json, issuer)
+        assertEquals("HTTPS://issuer.example.com/authorize", configuration.authorizationEndpoint)
     }
 
     @Test
