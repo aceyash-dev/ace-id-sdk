@@ -55,61 +55,63 @@ export async function fetchDiscovery(
   const url = `${normalized}/.well-known/openid-configuration`;
   const timeout = withRequestTimeout(timeoutMs);
 
-  let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: timeout.signal,
-      cache: 'no-store',
-    });
-  } catch (err) {
-    throw new AIDDiscoveryError(
-      `Failed to fetch OIDC discovery document from ${url}`,
-      err,
-    );
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: timeout.signal,
+        cache: 'no-store',
+      });
+    } catch (err) {
+      throw new AIDDiscoveryError(
+        `Failed to fetch OIDC discovery document from ${url}`,
+        err,
+      );
+    }
+
+    if (!res.ok) {
+      throw new AIDDiscoveryError(`OIDC discovery request failed: HTTP ${res.status}`);
+    }
+
+    let doc: OIDCDiscoveryDocument;
+    try {
+      doc = (await res.json()) as OIDCDiscoveryDocument;
+    } catch (err) {
+      throw new AIDDiscoveryError('OIDC discovery document is not valid JSON', err);
+    }
+
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+      throw new AIDDiscoveryError('OIDC discovery document must be a JSON object');
+    }
+
+    if (typeof doc.issuer !== 'string' || doc.issuer.length === 0) {
+      throw new AIDDiscoveryError('OIDC discovery document is missing "issuer"');
+    }
+    if (normalizeIssuer(doc.issuer) !== normalized) {
+      throw new AIDDiscoveryError(
+        `OIDC issuer mismatch: expected ${normalized}, received ${doc.issuer}`,
+      );
+    }
+    validateEndpoint(doc.authorization_endpoint, 'authorization_endpoint', normalized);
+    validateEndpoint(doc.token_endpoint, 'token_endpoint', normalized);
+    if (doc.userinfo_endpoint !== undefined) {
+      validateEndpoint(doc.userinfo_endpoint, 'userinfo_endpoint', normalized);
+    }
+    if (doc.jwks_uri !== undefined) {
+      validateEndpoint(doc.jwks_uri, 'jwks_uri', normalized);
+    }
+    if (doc.revocation_endpoint !== undefined) {
+      validateEndpoint(doc.revocation_endpoint, 'revocation_endpoint', normalized);
+    }
+    if (doc.end_session_endpoint !== undefined) {
+      validateEndpoint(doc.end_session_endpoint, 'end_session_endpoint', normalized);
+    }
+
+    return doc;
   } finally {
     timeout.dispose();
   }
-
-  if (!res.ok) {
-    throw new AIDDiscoveryError(`OIDC discovery request failed: HTTP ${res.status}`);
-  }
-
-  let doc: OIDCDiscoveryDocument;
-  try {
-    doc = (await res.json()) as OIDCDiscoveryDocument;
-  } catch (err) {
-    throw new AIDDiscoveryError('OIDC discovery document is not valid JSON', err);
-  }
-
-  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
-    throw new AIDDiscoveryError('OIDC discovery document must be a JSON object');
-  }
-
-  if (typeof doc.issuer !== 'string' || doc.issuer.length === 0) {
-    throw new AIDDiscoveryError('OIDC discovery document is missing "issuer"');
-  }
-  if (normalizeIssuer(doc.issuer) !== normalized) {
-    throw new AIDDiscoveryError(
-      `OIDC issuer mismatch: expected ${normalized}, received ${doc.issuer}`,
-    );
-  }
-  validateEndpoint(doc.authorization_endpoint, 'authorization_endpoint', normalized);
-  validateEndpoint(doc.token_endpoint, 'token_endpoint', normalized);
-  if (doc.userinfo_endpoint !== undefined) {
-    validateEndpoint(doc.userinfo_endpoint, 'userinfo_endpoint', normalized);
-  }
-  if (doc.jwks_uri !== undefined) {
-    validateEndpoint(doc.jwks_uri, 'jwks_uri', normalized);
-  }
-  if (doc.revocation_endpoint !== undefined) {
-    validateEndpoint(doc.revocation_endpoint, 'revocation_endpoint', normalized);
-  }
-  if (doc.end_session_endpoint !== undefined) {
-    validateEndpoint(doc.end_session_endpoint, 'end_session_endpoint', normalized);
-  }
-
-  return doc;
 }
 
 function validateEndpoint(
