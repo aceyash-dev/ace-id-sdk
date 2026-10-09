@@ -557,9 +557,14 @@ public final class AceIDClient {
         _ tokens: [(String, String)],
         at endpoint: URL,
         index: Int,
+        firstError: Error? = nil,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
-        guard index < tokens.count else { completion(.success(())); return }
+        guard index < tokens.count else {
+            if let firstError { completion(.failure(firstError)) }
+            else { completion(.success(())) }
+            return
+        }
         var request = URLRequest(url: endpoint, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -586,9 +591,23 @@ public final class AceIDClient {
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
-                case .failure(let error): completion(.failure(error))
+                case .failure(let error):
+                    // Try every token even if one revocation fails, then report the first error.
+                    self.revoke(
+                        tokens,
+                        at: endpoint,
+                        index: index + 1,
+                        firstError: firstError ?? error,
+                        completion: completion
+                    )
                 case .success:
-                    self.revoke(tokens, at: endpoint, index: index + 1, completion: completion)
+                    self.revoke(
+                        tokens,
+                        at: endpoint,
+                        index: index + 1,
+                        firstError: firstError,
+                        completion: completion
+                    )
                 }
             }
         }.resume()
