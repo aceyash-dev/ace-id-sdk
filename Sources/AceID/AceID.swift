@@ -281,11 +281,12 @@ public final class AceIDClient {
             completion(.failure(AceIDError.invalidConfiguration("Additional logout parameters cannot override OIDC logout security parameters.")))
             return
         }
-        if let postLogoutRedirectURI,
-           !AceIDConfiguration.isSafeRedirectURI(postLogoutRedirectURI) ||
-           (postLogoutRedirectURI != nil && postLogoutRedirectURI != configuration.redirectURI) {
-            completion(.failure(AceIDError.invalidConfiguration("postLogoutRedirectURI must exactly match the configured, registered redirect URI.")))
-            return
+        if let postLogoutRedirectURI {
+            guard AceIDConfiguration.isSafeRedirectURI(postLogoutRedirectURI),
+                  postLogoutRedirectURI == configuration.redirectURI else {
+                completion(.failure(AceIDError.invalidConfiguration("postLogoutRedirectURI must exactly match the configured, registered redirect URI.")))
+                return
+            }
         }
         do {
             guard let state = try loadAuthState() else {
