@@ -60,7 +60,13 @@ final class IDTokenVerifierTests: XCTestCase {
         }
         wait(for: [success], timeout: 2)
 
-        let tampered = String(validToken.dropLast()) + (validToken.last == "A" ? "B" : "A")
+        let signatureStart = validToken.lastIndex(of: ".")!
+        let signatureCharacter = validToken.index(after: signatureStart)
+        var tampered = validToken
+        tampered.replaceSubrange(
+            signatureCharacter...signatureCharacter,
+            with: validToken[signatureCharacter] == "A" ? "B" : "A"
+        )
         let failure = expectation(description: "tampered token rejected")
         AceIDIDTokenVerifier.validate(
             token: tampered,
