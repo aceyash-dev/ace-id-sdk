@@ -19,9 +19,8 @@ enum AceIDIDTokenVerifier {
               let header = try? JSONSerialization.jsonObject(with: headerData) as? [String: Any],
               let claims = try? JSONSerialization.jsonObject(with: claimsData) as? [String: Any],
               let algorithm = header["alg"] as? String,
-              let keyID = header["kid"] as? String,
-              !keyID.isEmpty,
               header["crit"] == nil,
+              (header["kid"] as? String).map({ !$0.isEmpty }) ?? true,
               ["RS256", "ES256"].contains(algorithm) else {
             completion(.failure(AceIDError.invalidIDToken("Malformed or unsupported ID token.")))
             return
@@ -69,13 +68,19 @@ enum AceIDIDTokenVerifier {
                       (200...299).contains(keyResponse.statusCode),
                       let keyData, keyData.count <= 1_000_000,
                       let jwks = try? JSONSerialization.jsonObject(with: keyData) as? [String: Any],
-                      let keys = jwks["keys"] as? [[String: Any]],
-                      let jwk = keys.first(where: {
-                          ($0["kid"] as? String) == keyID &&
-                          (($0["use"] as? String).map { $0 == "sig" } ?? true) &&
-                          (($0["alg"] as? String).map { $0 == algorithm } ?? true)
-                      }) else {
-                    completion(.failure(AceIDError.invalidIDToken("No matching signing key was found in the issuer JWKS.")))
+                      let keys = jwks["keys"] as? [[String: Any]] else {
+                    completion(.failure(AceIDError.invalidDiscoveryResponse))
+                    return
+                }
+                let keyID = header["kid"] as? String
+                let matchingKeys = keys.filter { key in
+                    (keyID == nil || (key["kid"] as? String) == keyID) &&
+                    ((key["use"] as? String).map { $0 == "sig" } ?? true) &&
+                    ((key["alg"] as? String).map { $0 == algorithm } ?? true) &&
+                    ((key["key_ops"] as? [String]).map { $0.contains("verify") } ?? true)
+                }
+                guard matchingKeys.count == 1, let jwk = matchingKeys.first else {
+                    completion(.failure(AceIDError.invalidIDToken("No unique matching signing key was found in the issuer JWKS.")))
                     return
                 }
 
@@ -101,6 +106,7 @@ enum AceIDIDTokenVerifier {
         expectedNonce: String?
     ) -> Bool {
         guard let tokenIssuer = claims["iss"] as? String,
+              let subject = claims["sub"] as? String, !subject.isEmpty,
               tokenIssuer == issuer.absoluteString,
               let expiration = (claims["exp"] as? NSNumber)?.doubleValue,
               expiration > Date().timeIntervalSince1970 - 60,
