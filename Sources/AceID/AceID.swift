@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 import AppAuth
 #if canImport(UIKit)
 import UIKit
@@ -176,9 +177,16 @@ public final class AceIDClient {
     private var authorizationFlow: OIDExternalUserAgentSession?
     #endif
 
-    public init(configuration: AceIDConfiguration, storage: AceIDStateStore = AceIDKeychainStore()) {
+    public init(configuration: AceIDConfiguration, storage: AceIDStateStore? = nil) {
         self.configuration = configuration
-        self.storage = storage
+        self.storage = storage ?? AceIDKeychainStore(account: Self.storageAccount(for: configuration))
+    }
+
+    /// Keep credentials for different issuer/client pairs in separate Keychain accounts.
+    private static func storageAccount(for configuration: AceIDConfiguration) -> String {
+        let identity = Data("\(configuration.issuer.absoluteString)\u{0}\(configuration.clientID)".utf8)
+        let digest = SHA256.hash(data: identity)
+        return "session." + digest.map { String(format: "%02x", $0) }.joined()
     }
 
     #if canImport(UIKit)
