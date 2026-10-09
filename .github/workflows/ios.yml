@@ -42,7 +42,10 @@ jobs:
           echo "$SCHEMES"
           SCHEME="$(printf '%s' "$SCHEMES" | jq -r '(.workspace.schemes // .project.schemes // [])[] | select(. == "AceID" or . == "AceID-Package")' | head -n 1)"
           if [ -z "$SCHEME" ]; then
-            echo "Could not find an AceID Swift Package scheme."
+            SCHEME="$(printf '%s' "$SCHEMES" | jq -r '(.workspace.schemes // .project.schemes // [])[0] // empty')"
+          fi
+          if [ -z "$SCHEME" ]; then
+            echo "No Xcode scheme was generated for the Swift Package."
             exit 1
           fi
           xcodebuild -scheme "$SCHEME" -destination 'generic/platform=iOS Simulator' build
