@@ -216,12 +216,7 @@ class AceID @JvmOverloads constructor(
             throw AidException("Stored authorization transaction is invalid", e)
         }
 
-        val now = System.currentTimeMillis()
-        if (
-            transaction.createdAt <= 0L ||
-            transaction.createdAt > now + MAX_TRANSACTION_FUTURE_SKEW_MS ||
-            now - transaction.createdAt > DEFAULT_TRANSACTION_TTL_MS
-        ) {
+        if (!transaction.hasValidTimestamp()) {
             storage.remove("transaction")
             throw AidException("Authorization transaction has an invalid timestamp or has expired")
         }
