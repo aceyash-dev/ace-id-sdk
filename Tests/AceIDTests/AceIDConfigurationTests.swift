@@ -44,6 +44,29 @@ final class AceIDConfigurationTests: XCTestCase {
         ))
     }
 
+
+    func testRejectsDangerousRedirectSchemes() {
+        XCTAssertThrowsError(try AceIDConfiguration(
+            issuer: URL(string: "https://identity.example.com")!,
+            clientID: "client",
+            redirectURI: URL(string: "javascript:alert(1)")!
+        ))
+        XCTAssertThrowsError(try AceIDConfiguration(
+            issuer: URL(string: "https://identity.example.com")!,
+            clientID: "client",
+            redirectURI: URL(string: "http://attacker.example/callback")!
+        ))
+    }
+
+    func testRejectsWhitespaceInsideScopeTokens() {
+        XCTAssertThrowsError(try AceIDConfiguration(
+            issuer: URL(string: "https://identity.example.com")!,
+            clientID: "client",
+            redirectURI: URL(string: "com.example.app:/oauth/callback")!,
+            scopes: ["openid", "email profile"]
+        ))
+    }
+
     func testEmptyClientIDFails() {
         XCTAssertThrowsError(try AceIDConfiguration(
             issuer: URL(string: "https://identity.example.com")!,
