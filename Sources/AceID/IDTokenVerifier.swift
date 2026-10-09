@@ -8,6 +8,7 @@ enum AceIDIDTokenVerifier {
         issuer: URL,
         clientID: String,
         expectedNonce: String?,
+        session: URLSession = .shared,
         completion: @escaping (Result<[String: String], Error>) -> Void
     ) {
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
@@ -39,7 +40,7 @@ enum AceIDIDTokenVerifier {
         var discoveryURL = issuer
         discoveryURL.appendPathComponent(".well-known")
         discoveryURL.appendPathComponent("openid-configuration")
-        URLSession.shared.dataTask(with: discoveryURL) { data, response, error in
+        session.dataTask(with: discoveryURL) { data, response, error in
             if let error {
                 completion(.failure(error))
                 return
@@ -59,7 +60,7 @@ enum AceIDIDTokenVerifier {
                 return
             }
 
-            URLSession.shared.dataTask(with: jwksURL) { keyData, keyResponse, keyError in
+            session.dataTask(with: jwksURL) { keyData, keyResponse, keyError in
                 if let keyError {
                     completion(.failure(keyError))
                     return
