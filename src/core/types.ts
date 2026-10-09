@@ -10,11 +10,10 @@ export interface AIDConfig {
   redirectUri: string;
   scope?: string;
   storage?: AIDStorage;
-  /**
-   * Proposal (additive): how long an in-flight authorization transaction
-   * may remain valid before the callback is rejected. Defaults to 10 minutes.
-   */
+  /** Lifetime of an in-flight authorization transaction. Defaults to 10 minutes. */
   transactionTtlMs?: number;
+  /** Network request timeout in milliseconds. Defaults to 10 seconds. */
+  requestTimeoutMs?: number;
 }
 
 export interface AIDServerConfig {
@@ -22,6 +21,8 @@ export interface AIDServerConfig {
   clientId: string;
   clientSecret: string;
   scope?: string;
+  /** Network request timeout in milliseconds. Defaults to 10 seconds. */
+  requestTimeoutMs?: number;
 }
 
 export interface AIDUser {
@@ -53,12 +54,7 @@ export interface AIDTokens {
 export interface AIDSession {
   user: AIDUser;
   tokens: AIDTokens;
-  /**
-   * Nonce from the original OIDC authentication.
-   *
-   * Refresh responses may omit nonce, but if they include it,
-   * it must match this original authentication nonce.
-   */
+  /** Nonce from the original OIDC authentication; refresh ID tokens may omit it. */
   nonce?: string;
 }
 
@@ -68,12 +64,10 @@ export interface AuthTransaction {
   codeVerifier: string;
   redirectUri: string;
   createdAt: number;
-  /**
-   * Proposal (additive): opaque application-supplied path to return to
-   * after a successful callback. The SDK does not follow it — the app does.
-   */
+  /** Opaque app-supplied value; the SDK does not navigate to it automatically. */
   returnTo?: string;
 }
+
 export interface AIDProjectConfig {
   issuer: string;
   app_id: string;
