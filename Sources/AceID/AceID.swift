@@ -47,24 +47,42 @@ public struct AceIDConfiguration: Sendable {
         guard scheme == "https" || (scheme == "http" && loopback) else {
             throw AceIDError.invalidConfiguration("issuer must use HTTPS (HTTP loopback is allowed for development).")
         }
-        guard let redirectScheme = redirectURI.scheme, !redirectScheme.isEmpty,
-              redirectURI.user == nil, redirectURI.password == nil, redirectURI.fragment == nil else {
-            throw AceIDError.invalidConfiguration("redirectURI must have a scheme and no credentials or fragment.")
+        guard Self.isSafeRedirectURI(redirectURI) else {
+            throw AceIDError.invalidConfiguration("redirectURI must use HTTPS or a registered custom scheme; HTTP is allowed only for loopback development.")
         }
-        if redirectScheme.lowercased() == "http" {
-            let redirectLoopback = ["localhost", "127.0.0.1", "::1"].contains(redirectURI.host?.lowercased() ?? "")
-            guard redirectLoopback else {
-                throw AceIDError.invalidConfiguration("HTTP redirectURIs are allowed only for localhost development.")
-            }
+        let normalizedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedClientID.contains(where: { $0.isWhitespace }) else {
+            throw AceIDError.invalidConfiguration("clientID must not contain whitespace.")
         }
         self.issuer = URL(string: issuer.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) ?? issuer
-        self.clientID = clientID
+        self.clientID = normalizedClientID
         self.redirectURI = redirectURI
         var uniqueScopes: [String] = []
-        for scope in scopes where !scope.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        for rawScope in scopes {
+            let scope = rawScope.trimmingCharacters(in: .whitespacesAndNewlines)
+            if scope.isEmpty { continue }
+            guard !scope.contains(where: { $0.isWhitespace }) else {
+                throw AceIDError.invalidConfiguration("Each scope must be a single non-empty scope token.")
+            }
             if !uniqueScopes.contains(scope) { uniqueScopes.append(scope) }
         }
         self.scopes = uniqueScopes.contains("openid") ? uniqueScopes : ["openid"] + uniqueScopes
+    }
+
+    static func isSafeRedirectURI(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              !scheme.isEmpty,
+              url.user == nil,
+              url.password == nil,
+              url.fragment == nil,
+              !["javascript", "data", "file", "ftp", "blob", "about"].contains(scheme) else {
+            return false
+        }
+        if scheme == "https" { return url.host != nil }
+        if scheme == "http" {
+            return ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased() ?? "")
+        }
+        return true
     }
 }
 
@@ -164,6 +182,12 @@ public final class AceIDClient {
         prefersEphemeralSession: Bool = false,
         completion: @escaping (Result<AceIDSession, Error>) -> Void
     ) {
+        guard !additionalParameters.keys.contains(where: {
+            ["client_id", "redirect_uri", "response_type", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "code_verifier"].contains($0.lowercased())
+        }) else {
+            completion(.failure(AceIDError.invalidConfiguration("Additional authorization parameters cannot override OAuth security parameters.")))
+            return
+        }
         OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -251,6 +275,16 @@ public final class AceIDClient {
         additionalParameters: [String: String] = [:],
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
+        guard additionalParameters.keys.allSatisfy({
+            !["id_token_hint", "post_logout_redirect_uri", "state"].contains($0.lowercased())
+        }) else {
+            completion(.failure(AceIDError.invalidConfiguration("Additional logout parameters cannot override OIDC logout security parameters.")))
+            return
+        }
+        if let postLogoutRedirectURI, !AceIDConfiguration.isSafeRedirectURI(postLogoutRedirectURI) {
+            completion(.failure(AceIDError.invalidConfiguration("postLogoutRedirectURI must use HTTPS or a registered custom scheme; HTTP is allowed only for loopback development.")))
+            return
+        }
         do {
             guard let state = try loadAuthState() else {
                 try storage.clear()
