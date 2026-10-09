@@ -41,12 +41,13 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
 
   const local = redirect.hostname === 'localhost' || redirect.hostname === '127.0.0.1';
   const secureRedirect = redirect.protocol === 'https:' || (local && redirect.protocol === 'http:');
+  const redirectSafe = secureRedirect && !redirect.username && !redirect.password && !redirect.hash;
   checks.push({
     name: 'redirect-uri',
-    status: secureRedirect && !redirect.username && !redirect.password ? 'pass' : 'fail',
-    message: secureRedirect && !redirect.username && !redirect.password
-      ? 'Redirect URI uses an allowed protocol and contains no URL credentials.'
-      : 'Redirect URI must use HTTPS (HTTP localhost only for development) and contain no credentials.',
+    status: redirectSafe ? 'pass' : 'fail',
+    message: redirectSafe
+      ? 'Redirect URI uses an allowed protocol and contains no credentials or fragment.'
+      : 'Redirect URI must use HTTPS (HTTP localhost only for development) and contain no credentials or fragment.',
   });
 
   const expected = config.expectedCallbacks ?? [];
@@ -59,6 +60,13 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
     message: callbackMatches
       ? expected.length ? 'Redirect URI matches one of the supplied expected callbacks.' : 'No expected callback list supplied; provider registration was not verified.'
       : 'Redirect URI does not match any supplied expected callback.',
+  });
+
+  const clientIdValid = typeof config.clientId === 'string' && config.clientId.trim().length > 0;
+  checks.push({
+    name: 'client-id',
+    status: clientIdValid ? 'pass' : 'fail',
+    message: clientIdValid ? 'A public client ID is configured.' : 'A non-empty public client ID is required.',
   });
 
   if (config.clockSkewSeconds !== undefined) {
@@ -82,7 +90,7 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
       ok: false,
       checkedAt: new Date().toISOString(),
       issuer: normalizedIssuer,
-      clientIdPresent: typeof config.clientId === 'string' && config.clientId.trim().length > 0,
+      clientIdPresent: clientIdValid,
       redirectUri: redirect.origin + redirect.pathname,
       checks,
     };
@@ -97,18 +105,22 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
   checks.push({ name: 'pkce-s256', status: pkce ? 'pass' : 'warn', message: pkce ? 'Provider metadata advertises S256 PKCE.' : 'Provider metadata does not advertise S256 PKCE; runtime policy still requires S256.' });
   checks.push({ name: 'jwks', status: discovery.jwks_uri ? 'pass' : 'fail', message: discovery.jwks_uri ? 'JWKS endpoint is present.' : 'JWKS endpoint is missing; ID-token verification cannot work.' });
   checks.push({ name: 'userinfo', status: discovery.userinfo_endpoint ? 'pass' : 'warn', message: discovery.userinfo_endpoint ? 'UserInfo endpoint is present.' : 'UserInfo endpoint is not advertised.' });
+  checks.push({ name: 'logout', status: discovery.end_session_endpoint ? 'pass' : 'warn', message: discovery.end_session_endpoint ? 'Provider logout endpoint is advertised.' : 'Provider logout endpoint is not advertised.' });
+  checks.push({ name: 'refresh', status: (discovery.grant_types_supported ?? []).includes('refresh_token') ? 'pass' : 'warn', message: (discovery.grant_types_supported ?? []).includes('refresh_token') ? 'Refresh-token grant is advertised.' : 'Refresh-token grant is not advertised.' });
 
+  const failed = checks.some((check) => check.status === 'fail');
+  const redirectUri = redirect.origin + redirect.pathname;
   return {
-    ok: checks.every((check) => check.status !== 'fail'),
+    ok: !failed,
     checkedAt: new Date().toISOString(),
     issuer: normalizedIssuer,
-    clientIdPresent: typeof config.clientId === 'string' && config.clientId.trim().length > 0,
-    redirectUri: redirect.origin + redirect.pathname,
+    clientIdPresent: clientIdValid,
+    redirectUri,
     checks,
     capabilities: {
       authorizationCode: authCode,
       pkceS256: pkce,
-      idTokenSigningAlgorithms: algorithms.filter((algorithm) => /^[A-Za-z0-9_-]{1,32}$/.test(algorithm)),
+      idTokenSigningAlgorithms: algorithms,
       userInfoAvailable: Boolean(discovery.userinfo_endpoint),
       logoutAvailable: Boolean(discovery.end_session_endpoint),
       refreshAdvertised: (discovery.grant_types_supported ?? []).includes('refresh_token'),
