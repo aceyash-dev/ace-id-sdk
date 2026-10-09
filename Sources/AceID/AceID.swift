@@ -11,6 +11,7 @@ public enum AceIDError: Error, LocalizedError {
     case missingSession
     case revocationEndpointUnavailable
     case invalidDiscoveryResponse
+    case invalidIDToken(String)
     case httpFailure(Int)
     case secureStorageFailure(OSStatus)
 
@@ -21,6 +22,7 @@ public enum AceIDError: Error, LocalizedError {
         case .missingSession: return "No authenticated session is available."
         case .revocationEndpointUnavailable: return "The identity provider does not advertise a token revocation endpoint."
         case .invalidDiscoveryResponse: return "The identity provider returned invalid discovery metadata."
+        case .invalidIDToken(let message): return message
         case .httpFailure(let status): return "The identity provider returned HTTP status \(status)."
         case .secureStorageFailure(let status): return "Secure storage operation failed (OSStatus \(status))."
         }
@@ -55,7 +57,7 @@ public struct AceIDConfiguration: Sendable {
                 throw AceIDError.invalidConfiguration("HTTP redirectURIs are allowed only for localhost development.")
             }
         }
-        self.issuer = issuer
+        self.issuer = URL(string: issuer.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) ?? issuer
         self.clientID = clientID
         self.redirectURI = redirectURI
         var uniqueScopes: [String] = []
@@ -191,16 +193,37 @@ public final class AceIDClient {
                             completion(.failure(AceIDError.missingSession))
                             return
                         }
-                        do {
-                            try self.persist(state)
-                            guard let session = Self.makeSession(from: state) else {
-                                try? self.storage.clear()
-                                completion(.failure(AceIDError.missingSession))
-                                return
+                        guard let idToken = state.lastTokenResponse?.idToken else {
+                            try? self.storage.clear()
+                            completion(.failure(AceIDError.invalidIDToken("The token response did not contain an ID token.")))
+                            return
+                        }
+                        let expectedNonce = state.lastAuthorizationResponse.request.nonce
+                        AceIDIDTokenVerifier.validate(
+                            token: idToken,
+                            issuer: self.configuration.issuer,
+                            clientID: self.configuration.clientID,
+                            expectedNonce: expectedNonce
+                        ) { validation in
+                            DispatchQueue.main.async {
+                                switch validation {
+                                case .failure(let error):
+                                    try? self.storage.clear()
+                                    completion(.failure(error))
+                                case .success(let claims):
+                                    do {
+                                        try self.persist(state)
+                                        guard let session = Self.makeSession(from: state, claims: claims) else {
+                                            try? self.storage.clear()
+                                            completion(.failure(AceIDError.missingSession))
+                                            return
+                                        }
+                                        completion(.success(session))
+                                    } catch {
+                                        completion(.failure(error))
+                                    }
+                                }
                             }
-                            completion(.success(session))
-                        } catch {
-                            completion(.failure(error))
                         }
                     }
                 }
@@ -284,6 +307,10 @@ public final class AceIDClient {
 
     public func currentSession() throws -> AceIDSession? {
         guard let state = try loadAuthState() else { return nil }
+        guard state.isAuthorized else {
+            try storage.clear()
+            return nil
+        }
         return Self.makeSession(from: state)
     }
 
@@ -302,11 +329,12 @@ public final class AceIDClient {
                 completion(.failure(AceIDError.missingSession))
                 return
             }
+            let previousIDToken = state.lastTokenResponse?.idToken
             if let expiry = state.lastTokenResponse?.accessTokenExpirationDate,
                expiry.timeIntervalSinceNow <= leeway {
                 state.setNeedsTokenRefresh()
             }
-            state.performAction() { [weak self] accessToken, _, error in
+            state.performAction() { [weak self] accessToken, freshIDToken, error in
                 guard let self else { return }
                 if let error {
                     if !state.isAuthorized { try? self.storage.clear() }
@@ -317,11 +345,33 @@ public final class AceIDClient {
                     completion(.failure(AceIDError.missingSession))
                     return
                 }
-                do {
-                    try self.persist(state)
-                    completion(.success(accessToken))
-                } catch {
-                    completion(.failure(error))
+                let persistAndComplete: ([String: String]?) -> Void = { claims in
+                    do {
+                        try self.persist(state)
+                        completion(.success(accessToken))
+                    } catch {
+                        completion(.failure(error))
+                    }
+                }
+                if let freshIDToken, freshIDToken != previousIDToken {
+                    AceIDIDTokenVerifier.validate(
+                        token: freshIDToken,
+                        issuer: self.configuration.issuer,
+                        clientID: self.configuration.clientID,
+                        expectedNonce: nil
+                    ) { validation in
+                        DispatchQueue.main.async {
+                            switch validation {
+                            case .failure(let error):
+                                try? self.storage.clear()
+                                completion(.failure(error))
+                            case .success(let claims):
+                                persistAndComplete(claims)
+                            }
+                        }
+                    }
+                } else {
+                    persistAndComplete(nil)
                 }
             }
         } catch {
@@ -396,7 +446,7 @@ public final class AceIDClient {
         try storage.write(data)
     }
 
-    private static func makeSession(from state: OIDAuthState) -> AceIDSession? {
+    private static func makeSession(from state: OIDAuthState, claims: [String: String]? = nil) -> AceIDSession? {
         guard let response = state.lastTokenResponse,
               let accessToken = response.accessToken,
               let expiry = response.accessTokenExpirationDate else { return nil }
@@ -406,7 +456,7 @@ public final class AceIDClient {
             idToken: response.idToken,
             tokenType: response.tokenType ?? "Bearer",
             expirationDate: expiry,
-            claims: decodeClaims(response.idToken) ?? [:]
+            claims: claims ?? decodeClaims(response.idToken) ?? [:]
         )
     }
 
