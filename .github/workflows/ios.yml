@@ -32,5 +32,7 @@ jobs:
         run: swift --version
       - name: Resolve packages
         run: swift package resolve
-      - name: Build and test iOS SDK
+      - name: Test the package on macOS
         run: swift test
+      - name: Compile the actual iOS Simulator target
+        run: xcodebuild -scheme AceID-Package -destination 'generic/platform=iOS Simulator' build
