@@ -178,17 +178,10 @@ public final class AceIDClient {
                     responseType: OIDResponseTypeCode,
                     additionalParameters: additionalParameters.isEmpty ? nil : additionalParameters
                 )
-                let externalUserAgent = OIDExternalUserAgentIOS(
-                    presenting: viewController,
-                    prefersEphemeralSession: prefersEphemeralSession
-                )
-                guard let externalUserAgent else {
-                    completion(.failure(AceIDError.invalidConfiguration("Unable to create a secure external user agent.")))
-                    return
-                }
                 self.authorizationFlow = OIDAuthState.authState(
                     byPresenting: request,
-                    externalUserAgent: externalUserAgent
+                    presenting: viewController,
+                    prefersEphemeralSession: prefersEphemeralSession
                 ) { [weak self] state, authError in
                     guard let self else { return }
                     DispatchQueue.main.async {
@@ -313,7 +306,7 @@ public final class AceIDClient {
                expiry.timeIntervalSinceNow <= leeway {
                 state.setNeedsTokenRefresh()
             }
-            state.performAction(withFreshTokens: { [weak self] accessToken, _, error in
+            state.performAction() { [weak self] accessToken, _, error in
                 guard let self else { return }
                 if let error {
                     if !state.isAuthorized { try? self.storage.clear() }
@@ -331,7 +324,7 @@ public final class AceIDClient {
                     completion(.failure(error))
                 }
             }
-        })
+        }
         } catch {
             completion(.failure(error))
         }
