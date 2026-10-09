@@ -175,6 +175,7 @@ public final class AceIDClient {
     private let storage: AceIDStateStore
     #if canImport(UIKit)
     private var authorizationFlow: OIDExternalUserAgentSession?
+    private var authorizationGeneration = UUID()
     #endif
 
     public init(configuration: AceIDConfiguration, storage: AceIDStateStore? = nil) {
@@ -202,9 +203,15 @@ public final class AceIDClient {
             completion(.failure(AceIDError.invalidConfiguration("Additional authorization parameters cannot override OAuth security parameters.")))
             return
         }
+        let generation = UUID()
+        authorizationGeneration = generation
         OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, error in
             DispatchQueue.main.async {
                 guard let self else { return }
+                guard self.authorizationGeneration == generation else {
+                    completion(.failure(AceIDError.missingAuthorizationFlow))
+                    return
+                }
                 if let error { completion(.failure(error)); return }
                 guard let service else {
                     completion(.failure(AceIDError.invalidDiscoveryResponse))
@@ -226,6 +233,10 @@ public final class AceIDClient {
                     guard let self else { return }
                     DispatchQueue.main.async {
                         defer { self.authorizationFlow = nil }
+                        guard self.authorizationGeneration == generation else {
+                            completion(.failure(AceIDError.missingAuthorizationFlow))
+                            return
+                        }
                         if let authError { completion(.failure(authError)); return }
                         guard let state else {
                             completion(.failure(AceIDError.missingSession))
@@ -248,6 +259,10 @@ public final class AceIDClient {
                             expectedNonce: expectedNonce
                         ) { validation in
                             DispatchQueue.main.async {
+                                guard self.authorizationGeneration == generation else {
+                                    completion(.failure(AceIDError.missingAuthorizationFlow))
+                                    return
+                                }
                                 switch validation {
                                 case .failure(let error):
                                     try? self.storage.clear()
@@ -304,6 +319,11 @@ public final class AceIDClient {
                 return
             }
         }
+        // Invalidate discovery, browser authorization, and token-validation callbacks so
+        // a late sign-in response cannot recreate a session after sign-out.
+        authorizationGeneration = UUID()
+        authorizationFlow?.cancel()
+        authorizationFlow = nil
         do {
             guard let state = try loadAuthState() else {
                 try storage.clear()
