@@ -54,7 +54,7 @@ describe("tokens", () => {
 
     expect(tokens.expiresIn).toBeUndefined();
     expect(tokens.expiresAt).toBeUndefined();
-    expect(isTokenExpired(tokens)).toBe(false);
+    expect(isTokenExpired(tokens)).toBe(true);
   });
 
   it("ignores a negative expires_in value", () => {
@@ -65,6 +65,7 @@ describe("tokens", () => {
 
     expect(tokens.expiresIn).toBeUndefined();
     expect(tokens.expiresAt).toBeUndefined();
+    expect(isTokenExpired(tokens)).toBe(true);
   });
 
   it("ignores a non-finite expires_in value", () => {
@@ -75,6 +76,7 @@ describe("tokens", () => {
 
     expect(tokens.expiresIn).toBeUndefined();
     expect(tokens.expiresAt).toBeUndefined();
+    expect(isTokenExpired(tokens)).toBe(true);
   });
 
   it("does not treat an expired token as valid when leeway is zero", () => {
