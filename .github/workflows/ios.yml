@@ -35,4 +35,14 @@ jobs:
       - name: Test the package on macOS
         run: swift test
       - name: Compile the actual iOS Simulator target
-        run: xcodebuild -scheme AceID-Package -destination 'generic/platform=iOS Simulator' build
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCHEMES="$(xcodebuild -list -json)"
+          echo "$SCHEMES"
+          SCHEME="$(printf '%s' "$SCHEMES" | jq -r '(.workspace.schemes // .project.schemes // [])[] | select(. == "AceID" or . == "AceID-Package")' | head -n 1)"
+          if [ -z "$SCHEME" ]; then
+            echo "Could not find an AceID Swift Package scheme."
+            exit 1
+          fi
+          xcodebuild -scheme "$SCHEME" -destination 'generic/platform=iOS Simulator' build
