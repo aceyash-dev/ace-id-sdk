@@ -5,7 +5,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  type ReactNode,
 } from 'react';
 import { AID } from '../browser/client.js';
 import type { AIDSession } from '../core/types.js';
@@ -26,7 +25,7 @@ export interface AuthContextValue {
 
 export interface AuthProviderProps {
   client: AID;
-  children?: ReactNode;
+  children?: unknown;
   /** Disable initial session hydration when the host app controls hydration. */
   hydrateOnMount?: boolean;
 }
@@ -114,7 +113,7 @@ export interface ProtectedRouteProps {
   children?: ReactNode;
   fallback?: ReactNode;
   loadingFallback?: ReactNode;
-  errorFallback?: (error: Error) => ReactNode;
+  errorFallback?: (error: Error) => unknown;
 }
 
 /** Framework/router-neutral guard; navigation remains the host app's responsibility. */
