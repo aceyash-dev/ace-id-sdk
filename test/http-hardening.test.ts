@@ -55,10 +55,7 @@ describe('SDK request and redirect hardening', () => {
 
   it('rejects unsafe cross-origin logout redirects before network work', async () => {
     const assign = vi.fn();
-    Object.defineProperty(globalThis, 'location', {
-      configurable: true,
-      value: { href: 'https://app.example.test/cb', assign },
-    });
+    vi.stubGlobal('location', { href: 'https://app.example.test/cb', assign });
     const fetchMock = vi.fn<
       (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
     >();
