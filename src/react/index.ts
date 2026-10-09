@@ -104,7 +104,7 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
 }
 
 export function useAuth(): AuthContextValue {
-  const value = useContext(AuthContext);
+  const value = useContext<AuthContextValue | null>(AuthContext);
   if (!value) throw new AIDError('CONFIGURATION_ERROR', 'useAuth must be used inside AuthProvider');
   return value;
 }
