@@ -34,15 +34,17 @@ export function normalizeIssuer(issuer: string): string {
     throw new AIDDiscoveryError('Issuer URL must not contain user information');
   }
 
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.search || url.hash) {
+    throw new AIDDiscoveryError('Issuer URL must not contain a query string or fragment');
+  }
+
+  const isLocalhost = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase());
   if (url.protocol !== 'https:' && !(isLocalhost && url.protocol === 'http:')) {
     throw new AIDDiscoveryError(
       'Issuer must use HTTPS (HTTP localhost/127.0.0.1 exempt for development)',
     );
   }
 
-  url.search = '';
-  url.hash = '';
   url.pathname = url.pathname.replace(/\/+$/, '');
   return url.toString().replace(/\/$/, '');
 }
