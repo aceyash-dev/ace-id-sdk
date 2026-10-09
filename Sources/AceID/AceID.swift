@@ -412,7 +412,7 @@ public final class AceIDClient {
                             case .failure(let error):
                                 try? self.storage.clear()
                                 completion(.failure(error))
-                            case .success(let claims):
+                            case .success:
                                 persistAndComplete()
                             }
                         }
