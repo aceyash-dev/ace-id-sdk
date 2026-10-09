@@ -329,7 +329,7 @@ public final class AceIDClient {
                         completion(.failure(AceIDError.invalidConfiguration("Unable to create a secure external user agent.")))
                         return
                     }
-                    self.authorizationFlow = OIDAuthorizationService.presentEndSessionRequest(
+                    self.authorizationFlow = OIDAuthorizationService.present(
                         request,
                         externalUserAgent: externalUserAgent
                     ) { [weak self] _, logoutError in
