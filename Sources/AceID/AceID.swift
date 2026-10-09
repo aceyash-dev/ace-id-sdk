@@ -324,7 +324,6 @@ public final class AceIDClient {
                     completion(.failure(error))
                 }
             }
-        }
         } catch {
             completion(.failure(error))
         }
