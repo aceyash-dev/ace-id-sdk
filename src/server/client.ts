@@ -55,23 +55,19 @@ export class AIDServer {
 
   private getDiscovery(): Promise<OIDCDiscoveryDocument> {
     if (!this.discoveryPromise) {
-      this.discoveryPromise = fetchDiscovery(
-        this.config.issuer,
-        this.config.requestTimeoutMs,
-      ).catch((err) => {
-        this.discoveryPromise = undefined;
-        throw err;
-      });
+      this.discoveryPromise = fetchDiscovery(this.config.issuer, this.config.requestTimeoutMs)
+        .catch((err) => {
+          this.discoveryPromise = undefined;
+          throw err;
+        });
     }
     return this.discoveryPromise;
   }
 
-  /** Expose the validated discovery document read-only. */
   async discovery(): Promise<OIDCDiscoveryDocument> {
     return this.getDiscovery();
   }
 
-  /** Exchange an authorization code using confidential client authentication. */
   async exchangeCode(
     code: string,
     redirectUri: string,
@@ -79,7 +75,6 @@ export class AIDServer {
   ): Promise<AIDTokens> {
     if (!code) throw new AIDError('CONFIGURATION_ERROR', 'authorization code is required');
     validateRedirectUri(redirectUri);
-
     const discovery = await this.getDiscovery();
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -89,7 +84,7 @@ export class AIDServer {
     if (opts.codeVerifier) body.set('code_verifier', opts.codeVerifier);
 
     const basic = base64Basic(this.config.clientId, this.config.clientSecret);
-    const response = await request(
+    const { response, payload } = await requestJson(
       discovery.token_endpoint,
       {
         method: 'POST',
@@ -103,16 +98,17 @@ export class AIDServer {
       this.config.requestTimeoutMs,
       'Token endpoint request failed',
     );
-
-    const json = await readJson(response, 'Token endpoint');
     if (!response.ok) {
-      const code_ = typeof json.error === 'string' ? json.error : `HTTP ${response.status}`;
-      const desc = typeof json.error_description === 'string' ? ` (${json.error_description})` : '';
-      throw new AIDTokenError(`Token endpoint error: ${code_}${desc}`, undefined, typeof json.error === 'string' ? json.error : undefined);
+      const code_ = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`;
+      const desc = typeof payload.error_description === 'string' ? ` (${payload.error_description})` : '';
+      throw new AIDTokenError(
+        `Token endpoint error: ${code_}${desc}`,
+        undefined,
+        typeof payload.error === 'string' ? payload.error : undefined,
+      );
     }
-
     try {
-      return normalizeTokens(json);
+      return normalizeTokens(payload);
     } catch (err) {
       throw new AIDTokenError('Invalid token response', err);
     }
@@ -124,8 +120,7 @@ export class AIDServer {
     if (!discovery.userinfo_endpoint) {
       throw new AIDDiscoveryError('Discovery document is missing "userinfo_endpoint"');
     }
-
-    const response = await request(
+    const { response, payload } = await requestJson(
       discovery.userinfo_endpoint,
       {
         headers: {
@@ -137,51 +132,51 @@ export class AIDServer {
       'UserInfo request failed',
       true,
     );
-
     if (!response.ok) {
       throw new AIDAuthenticationError(`UserInfo request failed: HTTP ${response.status}`);
     }
-    const json = await readJson(response, 'UserInfo');
-    if (typeof json.sub !== 'string' || !json.sub) {
+    if (typeof payload.sub !== 'string' || !payload.sub) {
       throw new AIDAuthenticationError('UserInfo response is missing "sub"');
     }
-    return userFromClaims(json);
+    return userFromClaims(payload);
   }
 }
 
-async function request(
+async function requestJson(
   url: string,
   init: RequestInit,
   timeoutMs: number,
   errorMessage: string,
   authenticationError = false,
-): Promise<Response> {
+): Promise<{ response: Response; payload: Record<string, unknown> }> {
   const timeout = withRequestTimeout(timeoutMs);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...init,
       signal: timeout.signal,
       cache: 'no-store',
     });
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch (err) {
+      if (authenticationError) {
+        throw new AIDAuthenticationError(`${errorMessage}: invalid JSON response`, err);
+      }
+      throw new AIDTokenError(`${errorMessage}: invalid JSON response`, err);
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      if (authenticationError) throw new AIDAuthenticationError('UserInfo response must be a JSON object');
+      throw new AIDTokenError('Token endpoint response must be a JSON object');
+    }
+    return { response, payload: value as Record<string, unknown> };
   } catch (err) {
+    if (err instanceof AIDTokenError || err instanceof AIDAuthenticationError) throw err;
     if (authenticationError) throw new AIDAuthenticationError(errorMessage, err);
     throw new AIDTokenError(errorMessage, err);
   } finally {
     timeout.dispose();
   }
-}
-
-async function readJson(response: Response, context: string): Promise<Record<string, unknown>> {
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch (err) {
-    throw new AIDTokenError(`${context} returned invalid JSON (HTTP ${response.status})`, err);
-  }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new AIDTokenError(`${context} response must be a JSON object`);
-  }
-  return value as Record<string, unknown>;
 }
 
 function validateRedirectUri(value: string): void {
