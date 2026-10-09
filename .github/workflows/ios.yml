@@ -9,19 +9,25 @@ on:
       - '.github/workflows/ios.yml'
   push:
     branches: [main]
+    tags: ['0.2.3']
     paths:
       - 'Sources/**'
       - 'Tests/**'
       - 'Package.swift'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Swift Package semantic version to validate"
+        required: true
+        default: "0.2.3"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ios-sdk-v2-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ios-sdk-v2-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'release' || 'ci' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   test:
