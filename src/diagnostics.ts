@@ -107,16 +107,21 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
 
   // An absent response_types_supported field is allowed by OIDC metadata. An explicitly
   // empty list is not evidence that Authorization Code is supported.
-  const authCode = responseTypes.values === undefined
+  const responseTypeSupportsCode = responseTypes.values === undefined
     ? !responseTypes.invalid && discovery.response_types_supported === undefined
     : responseTypes.values.includes('code');
+  const grantSupportsCode = grantTypes.values === undefined
+    ? !grantTypes.invalid && discovery.grant_types_supported === undefined
+    : grantTypes.values.includes('authorization_code');
+  const authCode = responseTypeSupportsCode && grantSupportsCode;
   const pkce = methods.values?.includes('S256') ?? false;
-  checks.push({ name: 'authorization-code', status: authCode ? 'pass' : 'fail', message: authCode ? 'Authorization Code is advertised or response types are unspecified.' : 'Provider metadata does not advertise Authorization Code response support.' });
+  checks.push({ name: 'authorization-code', status: authCode ? 'pass' : 'fail', message: authCode ? 'Authorization Code response and grant support are advertised or unspecified.' : 'Provider metadata explicitly excludes or invalidates Authorization Code response or grant support.' });
   checks.push({
     name: 'pkce-s256',
     status: methods.invalid ? 'fail' : methods.values === undefined ? 'warn' : pkce ? 'pass' : 'fail',
     message: pkce ? 'Provider metadata advertises S256 PKCE.' : methods.values === undefined && !methods.invalid ? 'Provider metadata does not specify PKCE methods; runtime policy still requires S256.' : 'Provider metadata explicitly does not support the required S256 PKCE method.',
   });
+  checks.push({ name: 'id-token-signing-algorithm', status: algorithmsResult.invalid ? 'fail' : algorithmsResult.values === undefined ? 'warn' : algorithmsResult.values.includes('RS256') ? 'pass' : 'fail', message: algorithmsResult.values?.includes('RS256') ? 'Provider metadata advertises the required RS256 ID-token signature algorithm.' : algorithmsResult.values === undefined && !algorithmsResult.invalid ? 'Provider metadata does not specify ID-token signing algorithms.' : 'Provider metadata does not advertise the required RS256 ID-token signature algorithm.' });
   checks.push({ name: 'jwks', status: discovery.jwks_uri ? 'pass' : 'fail', message: discovery.jwks_uri ? 'JWKS endpoint is present.' : 'JWKS endpoint is missing; ID-token verification cannot work.' });
   checks.push({ name: 'userinfo', status: discovery.userinfo_endpoint ? 'pass' : 'warn', message: discovery.userinfo_endpoint ? 'UserInfo endpoint is present.' : 'UserInfo endpoint is not advertised.' });
   checks.push({ name: 'logout', status: discovery.end_session_endpoint ? 'pass' : 'warn', message: discovery.end_session_endpoint ? 'Provider logout endpoint is advertised.' : 'Provider logout endpoint is not advertised.' });
