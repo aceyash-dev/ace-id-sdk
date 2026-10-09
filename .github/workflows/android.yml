@@ -1,6 +1,15 @@
 name: Android SDK
 
 on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
     inputs:
       release_tag:
@@ -15,6 +24,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: android-sdk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -42,6 +55,7 @@ jobs:
         run: gradle test assemble
 
       - name: Prepare AAR
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
@@ -51,6 +65,7 @@ jobs:
             "${GITHUB_WORKSPACE}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
 
       - name: Upload AAR artifact
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@v4
         with:
           name: ace-id-sdk-android
@@ -59,7 +74,7 @@ jobs:
 
   release:
     needs: build
-    if: ${{ needs.build.result == 'success' && inputs.publish_release }}
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.build.result == 'success' && inputs.publish_release }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
