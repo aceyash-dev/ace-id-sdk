@@ -44,4 +44,22 @@ describe('safe SDK diagnostics', () => {
     expect(report.ok).toBe(false);
     expect(report.checks.find((check) => check.name === 'registered-callback')?.status).toBe('fail');
   });
+
+  it('fails diagnostics for a missing client ID and an unsafe redirect', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      issuer: ISSUER,
+      authorization_endpoint: ISSUER + '/authorize',
+      token_endpoint: ISSUER + '/token',
+      jwks_uri: ISSUER + '/jwks',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const report = await diagnoseAID({
+      issuer: ISSUER,
+      clientId: ' ',
+      redirectUri: 'https://user@app.test/callback#fragment',
+    });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === 'client-id')?.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'redirect-uri')?.status).toBe('fail');
+    expect(report.redirectUri).toBe('https://app.test/callback');
+  });
 });
