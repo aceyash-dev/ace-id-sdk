@@ -168,11 +168,15 @@ enum AceIDIDTokenVerifier {
                   let exponent = jwk["e"] as? String,
                   let n = decodeBase64URL(modulus),
                   let e = decodeBase64URL(exponent),
-                  !n.isEmpty, n.first != 0,
-                  n.count > 256 || (n.first! & 0x80) != 0,
-                  !e.isEmpty, e.count <= 8, e.first != 0,
-                  e.last.map({ $0 & 1 == 1 }) == true,
-                  e.count > 1 || e[0] >= 3 else { return false }
+                  let firstModulusByte = n.first,
+                  let firstExponentByte = e.first,
+                  let lastExponentByte = e.last,
+                  firstModulusByte != 0,
+                  n.count > 256 || (firstModulusByte & 0x80) != 0,
+                  e.count <= 8,
+                  firstExponentByte != 0,
+                  (lastExponentByte & 1) == 1,
+                  e.count > 1 || firstExponentByte >= 3 else { return false }
             keyData = rsaPublicKeyDER(modulus: n, exponent: e)
             attributes = [
                 kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
