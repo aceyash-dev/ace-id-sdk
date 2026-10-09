@@ -156,13 +156,12 @@ public final class AceIDClient {
     }
 
     #if canImport(UIKit)
-    @discardableResult
     public func signIn(
         presenting viewController: UIViewController,
         additionalParameters: [String: String] = [:],
         prefersEphemeralSession: Bool = false,
         completion: @escaping (Result<AceIDSession, Error>) -> Void
-    ) -> OIDExternalUserAgentSession? {
+    ) {
         OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -212,12 +211,8 @@ public final class AceIDClient {
                         }
                     }
                 }
-                if self.authorizationFlow == nil {
-                    completion(.failure(AceIDError.missingAuthorizationFlow))
-                }
             }
         }
-        return authorizationFlow
     }
 
     @discardableResult
@@ -230,23 +225,22 @@ public final class AceIDClient {
 
     /// Performs provider logout in the external user agent when an end-session endpoint exists.
     /// Local credentials are cleared whether the provider redirects successfully or returns an error.
-    @discardableResult
     public func signOut(
         presenting viewController: UIViewController,
         postLogoutRedirectURI: URL? = nil,
         additionalParameters: [String: String] = [:],
         completion: @escaping (Result<Void, Error>) -> Void
-    ) -> OIDExternalUserAgentSession? {
+    ) {
         do {
             guard let state = try loadAuthState() else {
                 try storage.clear()
                 completion(.success(()))
-                return nil
+                return
             }
             guard let idToken = state.lastTokenResponse?.idToken else {
                 try storage.clear()
                 completion(.success(()))
-                return nil
+                return
             }
             OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, discoveryError in
                 DispatchQueue.main.async {
@@ -290,9 +284,8 @@ public final class AceIDClient {
         } catch {
             try? storage.clear()
             completion(.failure(error))
-            return nil
+            return
         }
-        return authorizationFlow
     }
     #endif
 
@@ -493,17 +486,17 @@ public final class AceIDClient {
         }.resume()
     }
 
-    private static func formEscape(_ value: String) -> String {
+    nonisolated private static func formEscape(_ value: String) -> String {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._*")
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
 
-    private static func normalizedIssuer(_ value: String) -> String {
+    nonisolated private static func normalizedIssuer(_ value: String) -> String {
         value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
-    private static func isLoopbackHTTP(_ url: URL) -> Bool {
+    nonisolated private static func isLoopbackHTTP(_ url: URL) -> Bool {
         url.scheme?.lowercased() == "http" &&
         ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased() ?? "")
     }
