@@ -27,14 +27,14 @@ jobs:
   test:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
       - name: Show Swift version
         run: swift --version
       - name: Resolve packages
         run: swift package resolve
-      - name: Test the package on macOS
-        run: swift test
-      - name: Compile the actual iOS Simulator target
+      - name: Compile and test the iOS Simulator target
         shell: bash
         run: |
           set -euo pipefail
@@ -48,4 +48,10 @@ jobs:
             echo "No Xcode scheme was generated for the Swift Package."
             exit 1
           fi
+          DEVICE="$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone "))) | .name] | sort | last')"
+          if [ -z "$DEVICE" ] || [ "$DEVICE" = "null" ]; then
+            echo "No available iPhone Simulator was found."
+            exit 1
+          fi
+          xcodebuild -scheme "$SCHEME" -destination "platform=iOS Simulator,name=$DEVICE" test
           xcodebuild -scheme "$SCHEME" -destination 'generic/platform=iOS Simulator' build
