@@ -28,6 +28,15 @@ describe('OIDC test issuer fetch compatibility', () => {
     expect(issuer.requests).toHaveLength(0);
   });
 
+  it('replaces Request headers when init.headers is explicitly empty', async () => {
+    const issuer = createMockOIDCIssuer();
+    const request = new Request(issuer.issuer + '/userinfo', {
+      headers: { authorization: 'Bearer original' },
+    });
+    const response = await issuer.fetch(request, { headers: {} });
+    expect(response.status).toBe(401);
+  });
+
   it('applies init header overrides to a Request input', async () => {
     const issuer = createMockOIDCIssuer();
     const request = new Request(issuer.issuer + '/userinfo', {
