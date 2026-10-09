@@ -34,6 +34,19 @@ jobs:
         run: swift --version
       - name: Resolve packages
         run: swift package resolve
+      - name: Verify release tag matches SDK version
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v0.2.3" || {
+            echo "This validation workflow is scoped to v0.2.3; received: $RELEASE_TAG" >&2
+            exit 1
+          }
+          test -f Package.swift
+          grep -q 'name: "AceID"' Package.swift
+
       - name: Compile and test the iOS Simulator target
         shell: bash
         run: |
