@@ -74,6 +74,7 @@ export class AIDServer {
   ): Promise<AIDTokens> {
     if (!code) throw new AIDError('CONFIGURATION_ERROR', 'authorization code is required');
     validateRedirectUri(redirectUri);
+
     const discovery = await this.getDiscovery();
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
@@ -120,6 +121,7 @@ export class AIDServer {
     if (!discovery.userinfo_endpoint) {
       throw new AIDDiscoveryError('Discovery document is missing "userinfo_endpoint"');
     }
+
     const { response, payload } = await requestJson(
       discovery.userinfo_endpoint,
       {
@@ -132,7 +134,6 @@ export class AIDServer {
       'UserInfo request failed',
       true,
     );
-
     if (!response.ok) {
       throw new AIDAuthenticationError(`UserInfo request failed: HTTP ${response.status}`);
     }
@@ -157,6 +158,7 @@ async function requestJson(
       signal: timeout.signal,
       cache: 'no-store',
     });
+
     let value: unknown;
     try {
       value = await response.json();
@@ -167,9 +169,7 @@ async function requestJson(
       throw new AIDTokenError(`${errorMessage}: invalid JSON response`, err);
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      if (authenticationError) {
-        throw new AIDAuthenticationError('UserInfo response must be a JSON object');
-      }
+      if (authenticationError) throw new AIDAuthenticationError('UserInfo response must be a JSON object');
       throw new AIDTokenError('Token endpoint response must be a JSON object');
     }
     return { response, payload: value as Record<string, unknown> };
