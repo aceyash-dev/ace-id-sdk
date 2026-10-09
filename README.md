@@ -121,6 +121,7 @@ const client = new AID({ issuer: 'https://identity.ace-base.cc', clientId: 'your
 function Account() {
   const { session, status, signIn } = useAuth();
   if (status === 'loading') return <p>Loading session…</p>;
+  if (status === 'error') return <p role="alert">Sign-in failed. Please try again.</p>;
   if (status !== 'authenticated') return <button onClick={() => void signIn()}>Sign in</button>;
   return <p>Signed in as {session?.user.email}</p>;
 }
