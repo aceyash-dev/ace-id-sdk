@@ -43,7 +43,6 @@ export class AIDServer {
     if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
       throw new AIDError('CONFIGURATION_ERROR', 'requestTimeoutMs must be a positive finite number');
     }
-
     this.config = {
       issuer: normalizeIssuer(config.issuer),
       clientId: config.clientId,
@@ -98,6 +97,7 @@ export class AIDServer {
       this.config.requestTimeoutMs,
       'Token endpoint request failed',
     );
+
     if (!response.ok) {
       const code_ = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`;
       const desc = typeof payload.error_description === 'string' ? ` (${payload.error_description})` : '';
@@ -132,6 +132,7 @@ export class AIDServer {
       'UserInfo request failed',
       true,
     );
+
     if (!response.ok) {
       throw new AIDAuthenticationError(`UserInfo request failed: HTTP ${response.status}`);
     }
@@ -166,7 +167,9 @@ async function requestJson(
       throw new AIDTokenError(`${errorMessage}: invalid JSON response`, err);
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      if (authenticationError) throw new AIDAuthenticationError('UserInfo response must be a JSON object');
+      if (authenticationError) {
+        throw new AIDAuthenticationError('UserInfo response must be a JSON object');
+      }
       throw new AIDTokenError('Token endpoint response must be a JSON object');
     }
     return { response, payload: value as Record<string, unknown> };
@@ -187,7 +190,8 @@ function validateRedirectUri(value: string): void {
     throw new AIDError('CONFIGURATION_ERROR', 'redirectUri must be an absolute URL', err);
   }
   const local = uri.hostname === 'localhost' || uri.hostname === '127.0.0.1';
-  if ((uri.protocol !== 'https:' && !(local && uri.protocol === 'http:')) || uri.username || uri.password) {
+  if ((uri.protocol !== 'https:' && !(local && uri.protocol === 'http:')) ||
+      uri.username || uri.password) {
     throw new AIDError(
       'CONFIGURATION_ERROR',
       'redirectUri must use HTTPS (HTTP localhost is allowed for development) and must not contain credentials',
