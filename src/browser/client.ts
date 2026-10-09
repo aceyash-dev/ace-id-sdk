@@ -423,10 +423,13 @@ async function postFormJson(
 }
 
 async function readResponseJson(res: Response): Promise<Record<string, unknown>> {
-  let value: unknown;
-  try { value = await res.json(); }
-  catch (err) {
-    throw new AIDTokenError(`Token endpoint returned non-JSON response (HTTP ${res.status})`, err);
+  const text = await res.text();
+  let value: unknown = {};
+  if (text.trim()) {
+    try { value = JSON.parse(text) as unknown; }
+    catch (err) {
+      throw new AIDTokenError(`Token endpoint returned non-JSON response (HTTP ${res.status})`, err);
+    }
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new AIDTokenError('Token endpoint response must be a JSON object');
