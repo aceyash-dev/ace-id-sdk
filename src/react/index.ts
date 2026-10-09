@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import type { ReactNode } from 'react';
 import { AID } from '../browser/client.js';
 import type { AIDSession } from '../core/types.js';
 import { AIDError } from '../core/errors.js';
@@ -25,7 +26,7 @@ export interface AuthContextValue {
 
 export interface AuthProviderProps {
   client: AID;
-  children?: unknown;
+  children?: ReactNode;
   /** Disable initial session hydration when the host app controls hydration. */
   hydrateOnMount?: boolean;
 }
@@ -33,7 +34,7 @@ export interface AuthProviderProps {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 /** Thin provider. It does not create a second token store or refresh implementation. */
-export function AuthProvider({ client, children, hydrateOnMount = true }: AuthProviderProps): unknown {
+export function AuthProvider({ client, children, hydrateOnMount = true }: AuthProviderProps): ReactNode {
   const [session, setSession] = useState<AIDSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>(hydrateOnMount ? 'loading' : 'unauthenticated');
   const [error, setError] = useState<Error | null>(null);
@@ -113,7 +114,7 @@ export interface ProtectedRouteProps {
   children?: ReactNode;
   fallback?: ReactNode;
   loadingFallback?: ReactNode;
-  errorFallback?: (error: Error) => unknown;
+  errorFallback?: (error: Error) => ReactNode;
 }
 
 /** Framework/router-neutral guard; navigation remains the host app's responsibility. */
@@ -122,7 +123,7 @@ export function ProtectedRoute({
   fallback = null,
   loadingFallback = null,
   errorFallback,
-}: ProtectedRouteProps): unknown {
+}: ProtectedRouteProps): ReactNode {
   const auth = useAuth();
   if (auth.status === 'loading') return loadingFallback;
   if (auth.status === 'error') return errorFallback ? errorFallback(auth.error ?? new Error('Authentication failed')) : fallback;
