@@ -286,8 +286,10 @@ public final class AceIDClient {
             return
         }
         if let postLogoutRedirectURI {
-            guard AceIDConfiguration.isSafeRedirectURI(postLogoutRedirectURI),
-                  postLogoutRedirectURI == configuration.redirectURI else {
+            guard AceIDConfiguration.isAllowedLogoutRedirect(
+                    postLogoutRedirectURI,
+                    configuredRedirectURI: configuration.redirectURI
+                  ) else {
                 completion(.failure(AceIDError.invalidConfiguration("postLogoutRedirectURI must exactly match the configured, registered redirect URI.")))
                 return
             }
