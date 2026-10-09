@@ -1,12 +1,17 @@
 import Foundation
 import Security
 import AppAuth
+#if canImport(UIKit)
 import UIKit
+#endif
 
 public enum AceIDError: Error, LocalizedError {
     case invalidConfiguration(String)
     case missingAuthorizationFlow
     case missingSession
+    case revocationEndpointUnavailable
+    case invalidDiscoveryResponse
+    case httpFailure(Int)
     case secureStorageFailure(OSStatus)
 
     public var errorDescription: String? {
@@ -14,6 +19,9 @@ public enum AceIDError: Error, LocalizedError {
         case .invalidConfiguration(let message): return message
         case .missingAuthorizationFlow: return "No authorization flow is pending."
         case .missingSession: return "No authenticated session is available."
+        case .revocationEndpointUnavailable: return "The identity provider does not advertise a token revocation endpoint."
+        case .invalidDiscoveryResponse: return "The identity provider returned invalid discovery metadata."
+        case .httpFailure(let status): return "The identity provider returned HTTP status \(status)."
         case .secureStorageFailure(let status): return "Secure storage operation failed (OSStatus \(status))."
         }
     }
@@ -80,7 +88,9 @@ public struct AceIDKeychainStore: AceIDStateStore {
         var value: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &value)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = value as? Data else { throw AceIDError.secureStorageFailure(status) }
+        guard status == errSecSuccess, let data = value as? Data else {
+            throw AceIDError.secureStorageFailure(status)
+        }
         return data
     }
 
@@ -102,7 +112,9 @@ public struct AceIDKeychainStore: AceIDStateStore {
 
     public func clear() throws {
         let status = SecItemDelete(baseQuery as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { throw AceIDError.secureStorageFailure(status) }
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw AceIDError.secureStorageFailure(status)
+        }
     }
 
     private var baseQuery: [String: Any] {
@@ -112,7 +124,7 @@ public struct AceIDKeychainStore: AceIDStateStore {
     }
 }
 
-public struct AceIDSession: Codable, Sendable {
+public struct AceIDSession: Sendable {
     public let accessToken: String
     public let refreshToken: String?
     public let idToken: String?
@@ -134,21 +146,29 @@ public struct AceIDSession: Codable, Sendable {
 public final class AceIDClient {
     public let configuration: AceIDConfiguration
     private let storage: AceIDStateStore
+    #if canImport(UIKit)
     private var authorizationFlow: OIDExternalUserAgentSession?
+    #endif
 
     public init(configuration: AceIDConfiguration, storage: AceIDStateStore = AceIDKeychainStore()) {
         self.configuration = configuration
         self.storage = storage
     }
 
+    #if canImport(UIKit)
     @discardableResult
-    public func signIn(presenting viewController: UIViewController, additionalParameters: [String: String] = [:], completion: @escaping (Result<AceIDSession, Error>) -> Void) -> OIDExternalUserAgentSession? {
+    public func signIn(
+        presenting viewController: UIViewController,
+        additionalParameters: [String: String] = [:],
+        prefersEphemeralSession: Bool = false,
+        completion: @escaping (Result<AceIDSession, Error>) -> Void
+    ) -> OIDExternalUserAgentSession? {
         OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, error in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let error { completion(.failure(error)); return }
                 guard let service else {
-                    completion(.failure(AceIDError.invalidConfiguration("OIDC discovery returned no configuration.")))
+                    completion(.failure(AceIDError.invalidDiscoveryResponse))
                     return
                 }
                 let request = OIDAuthorizationRequest(
@@ -159,28 +179,41 @@ public final class AceIDClient {
                     responseType: OIDResponseTypeCode,
                     additionalParameters: additionalParameters.isEmpty ? nil : additionalParameters
                 )
-                self.authorizationFlow = OIDAuthState.authState(byPresenting: request, presenting: viewController) { [weak self] state, authError in
+                let externalUserAgent = OIDExternalUserAgentIOS(
+                    presenting: viewController,
+                    prefersEphemeralSession: prefersEphemeralSession
+                )
+                guard let externalUserAgent else {
+                    completion(.failure(AceIDError.invalidConfiguration("Unable to create a secure external user agent.")))
+                    return
+                }
+                self.authorizationFlow = OIDAuthState.authState(
+                    byPresenting: request,
+                    externalUserAgent: externalUserAgent
+                ) { [weak self] state, authError in
                     guard let self else { return }
                     DispatchQueue.main.async {
                         defer { self.authorizationFlow = nil }
                         if let authError { completion(.failure(authError)); return }
-                        guard let state, let response = state.lastTokenResponse,
-                              let accessToken = response.accessToken,
-                              let expiry = response.accessTokenExpirationDate else {
+                        guard let state else {
                             completion(.failure(AceIDError.missingSession))
                             return
                         }
-                        let session = AceIDSession(
-                            accessToken: accessToken,
-                            refreshToken: response.refreshToken,
-                            idToken: response.idToken,
-                            tokenType: response.tokenType ?? "Bearer",
-                            expirationDate: expiry,
-                            claims: Self.decodeClaims(response.idToken) ?? [:]
-                        )
-                        do { try self.persist(session); completion(.success(session)) }
-                        catch { completion(.failure(error)) }
+                        do {
+                            try self.persist(state)
+                            guard let session = Self.makeSession(from: state) else {
+                                try? self.storage.clear()
+                                completion(.failure(AceIDError.missingSession))
+                                return
+                            }
+                            completion(.success(session))
+                        } catch {
+                            completion(.failure(error))
+                        }
                     }
+                }
+                if self.authorizationFlow == nil {
+                    completion(.failure(AceIDError.missingAuthorizationFlow))
                 }
             }
         }
@@ -195,30 +228,271 @@ public final class AceIDClient {
         return resumed
     }
 
+    /// Performs provider logout in the external user agent when an end-session endpoint exists.
+    /// Local credentials are cleared whether the provider redirects successfully or returns an error.
+    @discardableResult
+    public func signOut(
+        presenting viewController: UIViewController,
+        postLogoutRedirectURI: URL? = nil,
+        additionalParameters: [String: String] = [:],
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) -> OIDExternalUserAgentSession? {
+        do {
+            guard let state = try loadAuthState() else {
+                try storage.clear()
+                completion(.success(()))
+                return nil
+            }
+            guard let idToken = state.lastTokenResponse?.idToken else {
+                try storage.clear()
+                completion(.success(()))
+                return nil
+            }
+            OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, discoveryError in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let discoveryError {
+                        try? self.storage.clear()
+                        completion(.failure(discoveryError))
+                        return
+                    }
+                    guard let service, service.endSessionEndpoint != nil else {
+                        do { try self.storage.clear(); completion(.success(())) }
+                        catch { completion(.failure(error)) }
+                        return
+                    }
+                    let request = OIDEndSessionRequest(
+                        configuration: service,
+                        idTokenHint: idToken,
+                        postLogoutRedirectURL: postLogoutRedirectURI,
+                        additionalParameters: additionalParameters.isEmpty ? nil : additionalParameters
+                    )
+                    guard let externalUserAgent = OIDExternalUserAgentIOS(presenting: viewController) else {
+                        try? self.storage.clear()
+                        completion(.failure(AceIDError.invalidConfiguration("Unable to create a secure external user agent.")))
+                        return
+                    }
+                    self.authorizationFlow = OIDAuthorizationService.presentEndSessionRequest(
+                        request,
+                        externalUserAgent: externalUserAgent
+                    ) { [weak self] _, logoutError in
+                        guard let self else { return }
+                        DispatchQueue.main.async {
+                            self.authorizationFlow = nil
+                            do { try self.storage.clear() }
+                            catch { completion(.failure(error)); return }
+                            if let logoutError { completion(.failure(logoutError)) }
+                            else { completion(.success(())) }
+                        }
+                    }
+                }
+            }
+        } catch {
+            try? storage.clear()
+            completion(.failure(error))
+            return nil
+        }
+        return authorizationFlow
+    }
+    #endif
+
     public func currentSession() throws -> AceIDSession? {
-        guard let data = try storage.read() else { return nil }
-        do { return try JSONDecoder().decode(AceIDSession.self, from: data) }
-        catch { try? storage.clear(); return nil }
+        guard let state = try loadAuthState() else { return nil }
+        return Self.makeSession(from: state)
     }
 
-    /// Returns a non-expired stored access token. Refresh requires retaining AppAuth's
-    /// OIDAuthState; raw serialized token snapshots are intentionally not refreshed.
-    public func validAccessToken(leeway: TimeInterval = 60) throws -> String {
+    /// Returns a valid access token, refreshing through AppAuth when necessary.
+    /// The updated OIDAuthState (including rotated refresh tokens) is persisted before success.
+    public func validAccessToken(
+        leeway: TimeInterval = 60,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        guard leeway.isFinite, leeway >= 0, leeway <= 600 else {
+            completion(.failure(AceIDError.invalidConfiguration("Token leeway must be between 0 and 600 seconds.")))
+            return
+        }
+        do {
+            guard let state = try loadAuthState() else {
+                completion(.failure(AceIDError.missingSession))
+                return
+            }
+            if let expiry = state.lastTokenResponse?.accessTokenExpirationDate,
+               expiry.timeIntervalSinceNow <= leeway {
+                state.setNeedsTokenRefresh()
+            }
+            state.performAction { [weak self] accessToken, _, error in
+                guard let self else { return }
+                if let error {
+                    if !state.isAuthorized { try? self.storage.clear() }
+                    completion(.failure(error))
+                    return
+                }
+                guard let accessToken else {
+                    completion(.failure(AceIDError.missingSession))
+                    return
+                }
+                do {
+                    try self.persist(state)
+                    completion(.success(accessToken))
+                } catch {
+                    completion(.failure(error))
+                }
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    /// Synchronous cache-only accessor. Use the completion-based overload for automatic refresh.
+    public func cachedAccessToken(leeway: TimeInterval = 60) throws -> String {
         guard leeway.isFinite, leeway >= 0, leeway <= 600 else {
             throw AceIDError.invalidConfiguration("Token leeway must be between 0 and 600 seconds.")
         }
-        guard let session = try currentSession() else { throw AceIDError.missingSession }
-        guard session.expirationDate.timeIntervalSinceNow > leeway else {
-            try storage.clear()
+        guard let session = try currentSession(),
+              session.expirationDate.timeIntervalSinceNow > leeway else {
             throw AceIDError.missingSession
         }
         return session.accessToken
     }
 
-    public func signOut() throws { try storage.clear() }
+    /// Revokes refresh and access tokens through the provider's advertised RFC 7009 endpoint.
+    /// Local state is cleared only after all applicable remote revocations succeed.
+    public func revokeTokens(completion: @escaping (Result<Void, Error>) -> Void) {
+        do {
+            guard let state = try loadAuthState(),
+                  let response = state.lastTokenResponse,
+                  response.accessToken != nil else {
+                completion(.failure(AceIDError.missingSession))
+                return
+            }
+            let tokens = [
+                response.refreshToken.map { ($0, "refresh_token") },
+                response.accessToken.map { ($0, "access_token") }
+            ].compactMap { $0 }
+            discoverRevocationEndpoint { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .failure(let error):
+                    completion(.failure(error))
+                case .success(let endpoint):
+                    self.revoke(tokens, at: endpoint, index: 0) { result in
+                        switch result {
+                        case .failure(let error): completion(.failure(error))
+                        case .success:
+                            do { try self.storage.clear(); completion(.success(())) }
+                            catch { completion(.failure(error)) }
+                        }
+                    }
+                }
+            }
+        } catch {
+            completion(.failure(error))
+        }
+    }
 
-    private func persist(_ session: AceIDSession) throws {
-        try storage.write(JSONEncoder().encode(session))
+    /// Clears local session state without contacting the provider.
+    public func clearSession() throws {
+        try storage.clear()
+    }
+
+    private func loadAuthState() throws -> OIDAuthState? {
+        guard let data = try storage.read() else { return nil }
+        do {
+            return try NSKeyedUnarchiver.unarchivedObject(ofClass: OIDAuthState.self, from: data)
+        } catch {
+            try? storage.clear()
+            throw AceIDError.invalidConfiguration("Stored authorization state could not be decoded securely.")
+        }
+    }
+
+    private func persist(_ state: OIDAuthState) throws {
+        let data = try NSKeyedArchiver.archivedData(withRootObject: state, requiringSecureCoding: true)
+        try storage.write(data)
+    }
+
+    private static func makeSession(from state: OIDAuthState) -> AceIDSession? {
+        guard let response = state.lastTokenResponse,
+              let accessToken = response.accessToken,
+              let expiry = response.accessTokenExpirationDate else { return nil }
+        return AceIDSession(
+            accessToken: accessToken,
+            refreshToken: response.refreshToken,
+            idToken: response.idToken,
+            tokenType: response.tokenType ?? "Bearer",
+            expirationDate: expiry,
+            claims: decodeClaims(response.idToken) ?? [:]
+        )
+    }
+
+    private func discoverRevocationEndpoint(completion: @escaping (Result<URL, Error>) -> Void) {
+        var discoveryURL = configuration.issuer
+        discoveryURL.appendPathComponent(".well-known")
+        discoveryURL.appendPathComponent("openid-configuration")
+        URLSession.shared.dataTask(with: discoveryURL) { data, response, error in
+            if let error { completion(.failure(error)); return }
+            guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode),
+                  let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let issuerString = json["issuer"] as? String,
+                  Self.normalizedIssuer(issuerString) == Self.normalizedIssuer(self.configuration.issuer.absoluteString),
+                  let endpointString = json["revocation_endpoint"] as? String,
+                  let endpoint = URL(string: endpointString),
+                  endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
+                  endpoint.scheme?.lowercased() == "https" || Self.isLoopbackHTTP(endpoint) else {
+                completion(.failure(AceIDError.revocationEndpointUnavailable))
+                return
+            }
+            completion(.success(endpoint))
+        }.resume()
+    }
+
+    private func revoke(
+        _ tokens: [(String, String)],
+        at endpoint: URL,
+        index: Int,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard index < tokens.count else { completion(.success(())); return }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (token, hint) = tokens[index]
+        let fields = [
+            "token": token,
+            "token_type_hint": hint,
+            "client_id": configuration.clientID
+        ]
+        request.httpBody = fields.map { "\(Self.formEscape($0.key))=\(Self.formEscape($0.value))" }
+            .sorted().joined(separator: "&").data(using: .utf8)
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            guard let self else { return }
+            if let error { completion(.failure(error)); return }
+            guard let response = response as? HTTPURLResponse else {
+                completion(.failure(AceIDError.invalidDiscoveryResponse))
+                return
+            }
+            guard (200...299).contains(response.statusCode) else {
+                completion(.failure(AceIDError.httpFailure(response.statusCode)))
+                return
+            }
+            self.revoke(tokens, at: endpoint, index: index + 1, completion: completion)
+        }.resume()
+    }
+
+    private static func formEscape(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._*")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
+
+    private static func normalizedIssuer(_ value: String) -> String {
+        value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private static func isLoopbackHTTP(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "http" &&
+        ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased() ?? "")
     }
 
     private static func decodeClaims(_ jwt: String?) -> [String: String]? {
