@@ -584,7 +584,8 @@ public final class AceIDClient {
     }
 
     nonisolated private static func isSafeEndpoint(_ endpoint: URL, issuer: URL) -> Bool {
-        guard endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil else { return false }
+        guard endpoint.host != nil, endpoint.user == nil, endpoint.password == nil,
+              endpoint.query == nil, endpoint.fragment == nil else { return false }
         if endpoint.scheme?.lowercased() == "https" { return true }
         return isLoopbackIssuer(issuer) && isLoopbackHTTP(endpoint)
     }
@@ -597,6 +598,7 @@ public final class AceIDClient {
               normalizedIssuer(discoveredIssuer) == normalizedIssuer(expectedIssuer) else { return false }
         return isSafeEndpoint(service.authorizationEndpoint, issuer: expectedIssuer)
             && isSafeEndpoint(service.tokenEndpoint, issuer: expectedIssuer)
+            && (service.endSessionEndpoint.map { isSafeEndpoint($0, issuer: expectedIssuer) } ?? true)
     }
 
     private static func makeSession(from state: OIDAuthState, claims: [String: String]? = nil) -> AceIDSession? {
