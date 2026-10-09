@@ -54,7 +54,7 @@ public struct AceIDConfiguration: Sendable {
         guard !normalizedClientID.contains(where: { $0.isWhitespace }) else {
             throw AceIDError.invalidConfiguration("clientID must not contain whitespace.")
         }
-        self.issuer = URL(string: issuer.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))) ?? issuer
+        self.issuer = issuer
         self.clientID = normalizedClientID
         self.redirectURI = redirectURI
         var uniqueScopes: [String] = []
@@ -516,7 +516,7 @@ public final class AceIDClient {
                       let data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let issuerString = json["issuer"] as? String,
-                      Self.normalizedIssuer(issuerString) == Self.normalizedIssuer(issuer.absoluteString),
+                      issuerString == issuer.absoluteString,
                       let endpointString = json["revocation_endpoint"] as? String,
                       let endpoint = URL(string: endpointString),
                       endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
@@ -574,10 +574,6 @@ public final class AceIDClient {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._*")
         return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
-    }
-
-    nonisolated private static func normalizedIssuer(_ value: String) -> String {
-        value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     nonisolated private static func isLoopbackIssuer(_ issuer: URL) -> Bool {
