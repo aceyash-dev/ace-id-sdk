@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          git archive --format=tar.gz --prefix=ace-id-sdk/ "$GITHUB_SHA" Package.swift Sources Tests README.md > release/ace-id-sdk-swift-source-0.2.3.tar.gz
+          git archive --format=tar --prefix=ace-id-sdk/ "$GITHUB_SHA" Package.swift Sources Tests README.md | gzip -n > release/ace-id-sdk-swift-source-0.2.3.tar.gz
           tar -tzf release/ace-id-sdk-swift-source-0.2.3.tar.gz >/dev/null
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
