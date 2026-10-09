@@ -173,6 +173,9 @@ public struct AceIDSession: Sendable {
 public final class AceIDClient {
     public let configuration: AceIDConfiguration
     private let storage: AceIDStateStore
+    private var cachedAuthState: OIDAuthState?
+    /// Invalidates refresh and verification callbacks whenever local auth state changes.
+    private var sessionGeneration = UUID()
     #if canImport(UIKit)
     private var authorizationFlow: OIDExternalUserAgentSession?
     private var authorizationGeneration = UUID()
@@ -205,6 +208,7 @@ public final class AceIDClient {
         }
         let generation = UUID()
         authorizationGeneration = generation
+        sessionGeneration = UUID()
         OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, error in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -213,7 +217,8 @@ public final class AceIDClient {
                     return
                 }
                 if let error { completion(.failure(error)); return }
-                guard let service else {
+                guard let service,
+                      Self.isValidServiceConfiguration(service, expectedIssuer: self.configuration.issuer) else {
                     completion(.failure(AceIDError.invalidDiscoveryResponse))
                     return
                 }
@@ -322,6 +327,8 @@ public final class AceIDClient {
         // Invalidate discovery, browser authorization, and token-validation callbacks so
         // a late sign-in response cannot recreate a session after sign-out.
         authorizationGeneration = UUID()
+        sessionGeneration = UUID()
+        cachedAuthState = nil
         authorizationFlow?.cancel()
         authorizationFlow = nil
         do {
@@ -352,7 +359,13 @@ public final class AceIDClient {
                         completion(.failure(discoveryError))
                         return
                     }
-                    guard let service, service.endSessionEndpoint != nil else {
+                    guard let service,
+                          Self.isValidServiceConfiguration(service, expectedIssuer: self.configuration.issuer) else {
+                        try? self.storage.clear()
+                        completion(.failure(AceIDError.invalidDiscoveryResponse))
+                        return
+                    }
+                    guard service.endSessionEndpoint != nil else {
                         do { try self.storage.clear(); completion(.success(())) }
                         catch { completion(.failure(error)) }
                         return
@@ -415,6 +428,7 @@ public final class AceIDClient {
                 completion(.failure(AceIDError.missingSession))
                 return
             }
+            let generation = sessionGeneration
             let previousIDToken = state.lastTokenResponse?.idToken
             if let expiry = state.lastTokenResponse?.accessTokenExpirationDate,
                expiry.timeIntervalSinceNow <= leeway {
@@ -423,7 +437,14 @@ public final class AceIDClient {
             state.performAction() { [weak self] accessToken, freshIDToken, error in
                 guard let self else { return }
                 if let error {
-                    if !state.isAuthorized { try? self.storage.clear() }
+                    guard self.sessionGeneration == generation else {
+                        completion(.failure(AceIDError.missingSession))
+                        return
+                    }
+                    if !state.isAuthorized {
+                        self.cachedAuthState = nil
+                        try? self.storage.clear()
+                    }
                     completion(.failure(error))
                     return
                 }
@@ -432,6 +453,10 @@ public final class AceIDClient {
                     return
                 }
                 let persistAndComplete: () -> Void = {
+                    guard self.sessionGeneration == generation else {
+                        completion(.failure(AceIDError.missingSession))
+                        return
+                    }
                     do {
                         try self.persist(state)
                         completion(.success(accessToken))
@@ -447,8 +472,13 @@ public final class AceIDClient {
                         expectedNonce: nil
                     ) { validation in
                         DispatchQueue.main.async {
+                            guard self.sessionGeneration == generation else {
+                                completion(.failure(AceIDError.missingSession))
+                                return
+                            }
                             switch validation {
                             case .failure(let error):
+                                self.cachedAuthState = nil
                                 try? self.storage.clear()
                                 completion(.failure(error))
                             case .success:
@@ -491,20 +521,16 @@ public final class AceIDClient {
                 response.refreshToken.map { ($0, "refresh_token") },
                 response.accessToken.map { ($0, "access_token") }
             ].compactMap { $0 }
+            // Invalidate in-flight refreshes and remove local credentials immediately.
+            sessionGeneration = UUID()
+            cachedAuthState = nil
+            try storage.clear()
             discoverRevocationEndpoint { [weak self] result in
                 guard let self else { return }
                 switch result {
                 case .failure(let error):
                     completion(.failure(error))
                 case .success(let endpoint):
-                    do {
-                        // Clear locally before network calls so a killed process cannot retain
-                        // tokens after the caller has requested revocation.
-                        try self.storage.clear()
-                    } catch {
-                        completion(.failure(error))
-                        return
-                    }
                     self.revoke(tokens, at: endpoint, index: 0, completion: completion)
                 }
             }
@@ -515,14 +541,25 @@ public final class AceIDClient {
 
     /// Clears local session state without contacting the provider.
     public func clearSession() throws {
+        sessionGeneration = UUID()
+        cachedAuthState = nil
+        #if canImport(UIKit)
+        authorizationGeneration = UUID()
+        authorizationFlow?.cancel()
+        authorizationFlow = nil
+        #endif
         try storage.clear()
     }
 
     private func loadAuthState() throws -> OIDAuthState? {
+        if let cachedAuthState { return cachedAuthState }
         guard let data = try storage.read() else { return nil }
         do {
-            return try NSKeyedUnarchiver.unarchivedObject(ofClass: OIDAuthState.self, from: data)
+            let state = try NSKeyedUnarchiver.unarchivedObject(ofClass: OIDAuthState.self, from: data)
+            cachedAuthState = state
+            return state
         } catch {
+            cachedAuthState = nil
             try? storage.clear()
             throw AceIDError.invalidConfiguration("Stored authorization state could not be decoded securely.")
         }
@@ -531,6 +568,31 @@ public final class AceIDClient {
     private func persist(_ state: OIDAuthState) throws {
         let data = try NSKeyedArchiver.archivedData(withRootObject: state, requiringSecureCoding: true)
         try storage.write(data)
+        cachedAuthState = state
+    }
+
+    nonisolated private static func normalizedIssuer(_ url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        while let path = components?.path, path.hasSuffix("/"), !path.isEmpty {
+            components?.path = String(path.dropLast())
+        }
+        return components?.string ?? url.absoluteString
+    }
+
+    nonisolated private static func isSafeEndpoint(_ endpoint: URL, issuer: URL) -> Bool {
+        guard endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil else { return false }
+        if endpoint.scheme?.lowercased() == "https" { return true }
+        return isLoopbackIssuer(issuer) && isLoopbackHTTP(endpoint)
+    }
+
+    nonisolated private static func isValidServiceConfiguration(
+        _ service: OIDServiceConfiguration,
+        expectedIssuer: URL
+    ) -> Bool {
+        guard let discoveredIssuer = service.issuer,
+              normalizedIssuer(discoveredIssuer) == normalizedIssuer(expectedIssuer) else { return false }
+        return isSafeEndpoint(service.authorizationEndpoint, issuer: expectedIssuer)
+            && isSafeEndpoint(service.tokenEndpoint, issuer: expectedIssuer)
     }
 
     private static func makeSession(from state: OIDAuthState, claims: [String: String]? = nil) -> AceIDSession? {
@@ -567,12 +629,11 @@ public final class AceIDClient {
                       let data, data.count <= 1_000_000,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let issuerString = json["issuer"] as? String,
-                      issuerString == issuer.absoluteString,
+                      URL(string: issuerString).map({ Self.normalizedIssuer($0) == Self.normalizedIssuer(issuer) }) == true,
                       let endpointString = json["revocation_endpoint"] as? String,
                       let endpoint = URL(string: endpointString),
                       endpoint.host != nil,
-                      endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
-                      (endpoint.scheme?.lowercased() == "https" || Self.isLoopbackHTTP(endpoint)) {
+                      Self.isSafeEndpoint(endpoint, issuer: issuer) {
                 result = .success(endpoint)
             } else {
                 result = .failure(AceIDError.revocationEndpointUnavailable)
