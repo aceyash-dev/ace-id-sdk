@@ -84,6 +84,10 @@ public struct AceIDConfiguration: Sendable {
         }
         return true
     }
+
+    static func isAllowedLogoutRedirect(_ url: URL, configuredRedirectURI: URL) -> Bool {
+        isSafeRedirectURI(url) && url == configuredRedirectURI
+    }
 }
 
 public protocol AceIDStateStore: Sendable {
