@@ -38,6 +38,7 @@ class AceID @JvmOverloads constructor(
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
     private val refreshMutex = Mutex()
+    private val refreshLock = Any()
     @Volatile private var activeLoginCallback: AidSessionCallback? = null
     private val accountState = MutableStateFlow<AidUser?>(null)
     private val sessionStateFlow = MutableStateFlow<AidSessionState>(AidSessionState.Unauthenticated)
@@ -291,20 +292,22 @@ class AceID @JvmOverloads constructor(
     fun getValidAccessToken(
         context: Context,
         leewaySeconds: Long = tokenLeewaySeconds,
-    ): String? {
+    ): String? = synchronized(refreshLock) {
         require(leewaySeconds >= 0) { "leewaySeconds must not be negative" }
 
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         val store = AidSessionStore(storage)
-        val session = store.get() ?: return null
+        val session = store.get() ?: return@synchronized null
         val expiresAt = session.tokens.expiresAt
         val now = System.currentTimeMillis() / 1000L
 
         if (expiresAt == null || expiresAt > now + leewaySeconds) {
-            return session.tokens.accessToken
+            return@synchronized session.tokens.accessToken
         }
 
-        return refreshSession(context, session, store, storage).tokens.accessToken
+        // All sync and suspend entry points share this lock so a rotating refresh
+        // token cannot be submitted concurrently by two callers.
+        refreshSession(context, session, store, storage).tokens.accessToken
     }
 
     private fun refreshSession(
