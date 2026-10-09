@@ -172,7 +172,7 @@ enum AceIDIDTokenVerifier {
                   let firstExponentByte = e.first,
                   let lastExponentByte = e.last,
                   firstModulusByte != 0,
-                  n.count > 256 || (firstModulusByte & 0x80) != 0,
+                  rsaBitLength(n) >= 2048,
                   e.count <= 8,
                   firstExponentByte != 0,
                   (lastExponentByte & 1) == 1,
@@ -181,7 +181,7 @@ enum AceIDIDTokenVerifier {
             attributes = [
                 kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
                 kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
-                kSecAttrKeySizeInBits as String: n.count * 8
+                kSecAttrKeySizeInBits as String: rsaBitLength(n)
             ]
             secAlgorithm = .rsaSignatureMessagePKCS1v15SHA256
             signatureData = signature
@@ -211,6 +211,11 @@ enum AceIDIDTokenVerifier {
             return false
         }
         return SecKeyVerifySignature(key, secAlgorithm, signingInput as CFData, signatureData as CFData, &error)
+    }
+
+    private static func rsaBitLength(_ modulus: Data) -> Int {
+        guard let first = modulus.first, first != 0 else { return 0 }
+        return (modulus.count - 1) * 8 + (8 - first.leadingZeroBitCount)
     }
 
     /// Security.framework expects the PKCS#1 RSAPublicKey DER representation for RSA keys.
