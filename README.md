@@ -135,7 +135,7 @@ The React adapter is optional and does not add React to the core SDK runtime. Fo
 
 ## iOS (Swift Package)
 
-A native Swift Package is available under `Package.swift`. It uses AppAuth-iOS for OIDC discovery and Authorization Code + PKCE, with Keychain-backed session storage. See [the iOS SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-ios). The starter intentionally fails closed when a stored access token expires; safe refresh requires persisting AppAuth's authorization state and is not falsely simulated from raw token strings.
+A native Swift Package is available under `Package.swift`. It uses AppAuth-iOS for OIDC discovery and Authorization Code + PKCE, with Keychain-backed session storage. See [the iOS SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-ios). AppAuth's authorization state is persisted securely. `validAccessToken` delegates refresh to AppAuth and persists rotated token state; refresh errors fail closed instead of fabricating a session from raw token strings.
 
 ## Android
 
