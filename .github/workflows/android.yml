@@ -14,11 +14,13 @@ on:
         type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -43,19 +45,24 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          set -euo pipefail
           mkdir -p release
-          cp android/library/build/outputs/aar/library-release.aar "${{ github.workspace }}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
+          cp android/library/build/outputs/aar/library-release.aar \
+            "${GITHUB_WORKSPACE}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
 
       - name: Upload AAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: ace-id-sdk-android
           path: release/*.aar
+          if-no-files-found: error
 
   release:
     needs: build
     if: ${{ needs.build.result == 'success' && inputs.publish_release }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Download successful build artifact
@@ -69,5 +76,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          set -euo pipefail
           test -f "release/ace-id-sdk-android-${RELEASE_TAG}.aar"
-          gh release create "${RELEASE_TAG}"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "${GITHUB_REPOSITORY}"             --target "${GITHUB_SHA}"             --title "Android SDK ${RELEASE_TAG}"             --generate-notes
+          gh release create "${RELEASE_TAG}" \
+            "release/ace-id-sdk-android-${RELEASE_TAG}.aar" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Android SDK ${RELEASE_TAG}" \
+            --generate-notes
