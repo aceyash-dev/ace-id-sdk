@@ -217,7 +217,8 @@ export class AID {
     const session = this.getSession();
     if (!session) return false;
     const expiresAt = session.tokens.expiresAt;
-    return typeof expiresAt !== 'number' || Date.now() < expiresAt;
+    return typeof expiresAt === 'number' && Number.isFinite(expiresAt) &&
+      expiresAt > 0 && Date.now() < expiresAt;
   }
 
   getUser(): AIDUser | null { return this.getSession()?.user ?? null; }
