@@ -108,6 +108,30 @@ The SDK can be loaded directly in a browser without npm or a bundler:
 
 The browser bundle exposes the SDK through the global `AceID` object. Available exports include `AID`, storage adapters, PKCE helpers, and SDK error classes.
 
+## React integration
+
+Install React 18 or newer in your application, then import the optional adapter from `ace-id-sdk/react`:
+
+```tsx
+import { AID } from 'ace-id-sdk';
+import { AuthProvider, useAuth, ProtectedRoute } from 'ace-id-sdk/react';
+
+const client = new AID({ issuer: 'https://identity.ace-base.cc', clientId: 'your-client-id', redirectUri: 'https://app.example.com/callback' });
+
+function Account() {
+  const { session, status, signIn } = useAuth();
+  if (status === 'loading') return <p>Loading session…</p>;
+  if (status !== 'authenticated') return <button onClick={() => void signIn()}>Sign in</button>;
+  return <p>Signed in as {session?.user.email}</p>;
+}
+
+export function App() {
+  return <AuthProvider client={client}><ProtectedRoute fallback={<p>Please sign in.</p>}><Account /></ProtectedRoute></AuthProvider>;
+}
+```
+
+The React adapter is optional and does not add React to the core SDK runtime. For SSR and cookie-session security guidance, see [framework adapters](docs/framework-adapters.md). The test issuer helper is exported from `ace-id-sdk/testing`; redacted runtime diagnostics are exported from `ace-id-sdk/diagnostics`.
+
 ## Android
 
 The repository also contains a native Kotlin Android SDK:
