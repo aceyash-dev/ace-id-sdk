@@ -19,6 +19,22 @@ final class IDTokenVerifierTests: XCTestCase {
         wait(for: [finished], timeout: 1)
     }
 
+    func testRejectsOversizedTokenWithoutNetworkRequest() {
+        let finished = expectation(description: "oversized token rejected")
+        AceIDIDTokenVerifier.validate(
+            token: String(repeating: "a", count: 131_073),
+            issuer: URL(string: "https://identity.example.com")!,
+            clientID: "aceid-test-client",
+            expectedNonce: nil
+        ) { result in
+            if case .success = result {
+                XCTFail("Oversized token must never be accepted")
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 1)
+    }
+
     func testRejectsUnsignedToken() {
         let finished = expectation(description: "unsigned token rejected")
         let header = base64URL(#"{"alg":"none","kid":"none"}"#)
