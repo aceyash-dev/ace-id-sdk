@@ -584,8 +584,9 @@ public final class AceIDClient {
     }
 
     nonisolated private static func isSafeEndpoint(_ endpoint: URL, issuer: URL) -> Bool {
+        // OAuth endpoint URLs may legitimately include a fixed query component.
         guard endpoint.host != nil, endpoint.user == nil, endpoint.password == nil,
-              endpoint.query == nil, endpoint.fragment == nil else { return false }
+              endpoint.fragment == nil else { return false }
         if endpoint.scheme?.lowercased() == "https" { return true }
         return isLoopbackIssuer(issuer) && isLoopbackHTTP(endpoint)
     }
