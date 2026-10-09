@@ -8,6 +8,8 @@ import {
   createCodeVerifier,
   createCodeChallenge,
 } from '../browser/pkce.js';
+import { createAIDFromProjectConfig } from '../browser/project-config.js';
+import type { AIDProjectConfig, AIDConfig } from '../core/types.js';
 import {
   AIDError,
   AIDDiscoveryError,
@@ -23,6 +25,7 @@ const AceID = {
   LocalStorage,
   createCodeVerifier,
   createCodeChallenge,
+  createAIDFromProjectConfig,
   AIDError,
   AIDDiscoveryError,
   AIDCallbackError,
@@ -37,11 +40,13 @@ export {
   LocalStorage,
   createCodeVerifier,
   createCodeChallenge,
+  createAIDFromProjectConfig,
   AIDError,
   AIDDiscoveryError,
-  AIDCallbackError,
   AIDTokenError,
+  AIDCallbackError,
   AIDAuthenticationError,
 };
+export type { AIDProjectConfig, AIDConfig };
 
 export default AceID;
