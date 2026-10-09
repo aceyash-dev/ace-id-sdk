@@ -29,6 +29,17 @@ class OidcDiscoveryTest {
         }
     }
 
+
+    @Test
+    fun normalizeIssuerRejectsQueryAndFragmentInsteadOfSilentlyRewriting() {
+        assertThrows(AidDiscoveryException::class.java) {
+            OidcDiscovery.normalizeIssuer("https://issuer.example.com?tenant=other")
+        }
+        assertThrows(AidDiscoveryException::class.java) {
+            OidcDiscovery.normalizeIssuer("https://issuer.example.com/#other")
+        }
+    }
+
     @Test
     fun httpIsRejectedExceptLoopback() {
         assertThrows(AidDiscoveryException::class.java) {
