@@ -181,44 +181,18 @@ class AceID @JvmOverloads constructor(
         }
 
     fun handleCallback(context: Context, callbackUri: Uri): AidSession {
-        val transactionStorage = AidSecureStorage(context, normalizedIssuer, clientId)
-        val error = callbackUri.getQueryParameter("error")
-        if (!error.isNullOrBlank()) {
-            val description = callbackUri.getQueryParameter("error_description")
-            val exception = AidException(
-                "OIDC authorization failed: $error" +
-                    (description?.let { ": $it" } ?: ""),
-            )
-            transactionStorage.remove("transaction")
-            notifyLoginFailure(exception)
-            throw exception
-        }
-
-        val code = callbackUri.getQueryParameter("code")
-            ?: run {
-                transactionStorage.remove("transaction")
-                throw AidException("Authorization callback is missing code")
-            }
+        val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         val state = callbackUri.getQueryParameter("state")
-            ?: run {
-                transactionStorage.remove("transaction")
-                throw AidException("Authorization callback is missing state")
-            }
+            ?: throw AidException("Authorization callback is missing state")
 
-        val storage = transactionStorage
         val transactionJson = storage.get("transaction")
             ?: throw AidException("No pending authorization transaction")
-
         val transaction = try {
             AidTransaction.fromJson(transactionJson)
-        } catch (e: Exception) {
+        } catch (error: Exception) {
+            // A malformed local transaction cannot be safely matched to this callback.
             storage.remove("transaction")
-            throw AidException("Stored authorization transaction is invalid", e)
-        }
-
-        if (!transaction.hasValidTimestamp()) {
-            storage.remove("transaction")
-            throw AidException("Authorization transaction has an invalid timestamp or has expired")
+            throw AidException("Stored authorization transaction is invalid", error)
         }
 
         if (!MessageDigest.isEqual(
@@ -226,15 +200,35 @@ class AceID @JvmOverloads constructor(
                 state.toByteArray(Charsets.UTF_8),
             )
         ) {
+            // Unmatched callbacks must not cancel a legitimate login in progress.
             throw AidException("Authorization state does not match the pending transaction")
         }
 
+        fun failMatchedCallback(error: Throwable): Nothing {
+            storage.remove("transaction")
+            notifyLoginFailure(error)
+            throw error
+        }
+
+        if (!transaction.hasValidTimestamp()) {
+            failMatchedCallback(AidException("Authorization transaction has an invalid timestamp or has expired"))
+        }
+
+        val providerError = callbackUri.getQueryParameter("error")
+        if (!providerError.isNullOrBlank()) {
+            // Do not echo the provider's free-form error_description into SDK messages.
+            failMatchedCallback(AidException("OIDC authorization failed: $providerError"))
+        }
+
+        val code = callbackUri.getQueryParameter("code")
+            ?: failMatchedCallback(AidException("Authorization callback is missing code"))
+
         if (callbackUri.getQueryParameter("redirect_uri") != null) {
-            throw AidException("Unexpected redirect_uri parameter in authorization callback")
+            failMatchedCallback(AidException("Unexpected redirect_uri parameter in authorization callback"))
         }
 
         if (transaction.redirectUri != redirectUri) {
-            throw AidException("Authorization transaction redirect URI does not match this client")
+            failMatchedCallback(AidException("Authorization transaction redirect URI does not match this client"))
         }
 
         // Consume the transaction before exchanging the code. This prevents replay,
