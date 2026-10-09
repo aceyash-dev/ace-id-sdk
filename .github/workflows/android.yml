@@ -13,14 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "GitHub release tag"
+        description: "Version for the AAR artifact"
         required: true
-        default: "v0.2.3"
-      publish_release:
-        description: "Create a GitHub Release after a successful AAR build"
-        required: true
-        default: false
-        type: boolean
+        default: "0.2.3"
 
 permissions:
   contents: read
@@ -52,22 +47,22 @@ jobs:
         with:
           gradle-version: "9.6.0"
 
-      - name: Verify release tag matches SDK version
+      - name: Verify release version
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          test "$RELEASE_TAG" = "v0.2.3" || {
-            echo "This release workflow is scoped to v0.2.3; received: $RELEASE_TAG" >&2
+          test "$RELEASE_TAG" = "0.2.3" || {
+            echo "This build is scoped to version 0.2.3; received: $RELEASE_TAG" >&2
             exit 1
           }
 
-      - name: Build Android library
+      - name: Build and test Android library
         working-directory: android
-        run: gradle test assemble
+        run: gradle --no-daemon test assemble
 
-      - name: Prepare AAR
+      - name: Prepare AAR and SHA-256 manifest
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
@@ -76,39 +71,14 @@ jobs:
           mkdir -p release
           cp android/library/build/outputs/aar/library-release.aar \
             "${GITHUB_WORKSPACE}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
+          cd release
+          sha256sum "ace-id-sdk-android-${RELEASE_TAG}.aar" > "ace-id-sdk-android-${RELEASE_TAG}.aar.sha256"
 
       - name: Upload AAR artifact
         if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ace-id-sdk-android
-          path: release/*.aar
+          name: ace-id-sdk-android-0.2.3
+          path: release/*
           if-no-files-found: error
-
-  release:
-    needs: build
-    if: ${{ github.event_name == 'workflow_dispatch' && needs.build.result == 'success' && inputs.publish_release }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download successful build artifact
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
-        with:
-          name: ace-id-sdk-android
-          path: release
-
-      - name: Create GitHub release and upload AAR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          test -f "release/ace-id-sdk-android-${RELEASE_TAG}.aar"
-          gh release create "${RELEASE_TAG}" \
-            "release/ace-id-sdk-android-${RELEASE_TAG}.aar" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
-            --title "Android SDK ${RELEASE_TAG}" \
-            --generate-notes
+          retention-days: 30
