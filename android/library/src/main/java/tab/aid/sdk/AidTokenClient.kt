@@ -69,10 +69,11 @@ internal object AidTokenClient {
                 val description = runCatching {
                     JSONObject(response).optString("error_description").takeIf { it.isNotBlank() }
                 }.getOrNull()
-                throw AidException(
-                    "OIDC token request failed: HTTP $responseCode" +
+                throw AidTokenEndpointException(
+                    errorCode = error,
+                    message = "OIDC token request failed: HTTP $responseCode" +
                         (error?.let { " ($it)" } ?: "") +
-                        (description?.let { ": $it" } ?: ""),
+                        (description?.let { " (provider description redacted)" } ?: ""),
                 )
             }
 
