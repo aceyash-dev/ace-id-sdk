@@ -47,6 +47,7 @@ class AceID @JvmOverloads constructor(
 
     companion object {
         const val DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000L
+        const val MAX_TRANSACTION_FUTURE_SKEW_MS = 60 * 1000L
         const val DEFAULT_DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
         const val DEFAULT_ACCOUNT_CACHE_TTL_MS = 30 * 1000L
         const val DEFAULT_TOKEN_LEEWAY_SECONDS = 60L
@@ -215,9 +216,14 @@ class AceID @JvmOverloads constructor(
             throw AidException("Stored authorization transaction is invalid", e)
         }
 
-        if (System.currentTimeMillis() - transaction.createdAt > DEFAULT_TRANSACTION_TTL_MS) {
+        val now = System.currentTimeMillis()
+        if (
+            transaction.createdAt <= 0L ||
+            transaction.createdAt > now + MAX_TRANSACTION_FUTURE_SKEW_MS ||
+            now - transaction.createdAt > DEFAULT_TRANSACTION_TTL_MS
+        ) {
             storage.remove("transaction")
-            throw AidException("Authorization transaction has expired")
+            throw AidException("Authorization transaction has an invalid timestamp or has expired")
         }
 
         if (!MessageDigest.isEqual(
@@ -280,8 +286,9 @@ class AceID @JvmOverloads constructor(
         leewaySeconds: Long = tokenLeewaySeconds,
     ): Boolean {
         val session = getSession(context) ?: return false
-        val expiresAt = session.tokens.expiresAt ?: return true
-        return expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds
+        if (leewaySeconds < 0) return false
+        val expiresAt = session.tokens.expiresAt ?: return false
+        return expiresAt > 0L && expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds
     }
 
     fun getUser(context: Context): AidUser? = getSession(context)?.user.also { accountState.value = it }
@@ -301,13 +308,29 @@ class AceID @JvmOverloads constructor(
         val expiresAt = session.tokens.expiresAt
         val now = System.currentTimeMillis() / 1000L
 
-        if (expiresAt == null || expiresAt > now + leewaySeconds) {
+        if (expiresAt != null && expiresAt > 0L && expiresAt > now + leewaySeconds) {
             return@synchronized session.tokens.accessToken
+        }
+
+        if (session.tokens.refreshToken.isNullOrBlank()) {
+            store.clear()
+            accountState.value = null
+            sessionStateFlow.value = AidSessionState.Unauthenticated
+            return@synchronized null
         }
 
         // All sync and suspend entry points share this lock so a rotating refresh
         // token cannot be submitted concurrently by two callers.
-        refreshSession(context, session, store, storage).tokens.accessToken
+        try {
+            refreshSession(context, session, store, storage).tokens.accessToken
+        } catch (error: AidTokenEndpointException) {
+            if (error.errorCode == "invalid_grant") {
+                store.clear()
+                accountState.value = null
+                sessionStateFlow.value = AidSessionState.Unauthenticated
+            }
+            throw error
+        }
     }
 
     private fun refreshSession(
