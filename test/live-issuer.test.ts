@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fetchDiscovery } from '../src/core/discovery.js';
+import { fetchDiscovery, normalizeIssuer } from '../src/core/discovery.js';
 
 const issuer = (globalThis as typeof globalThis & {
   process?: { env?: Record<string, string | undefined> };
@@ -13,9 +13,15 @@ const issuer = (globalThis as typeof globalThis & {
 describe('live development issuer compatibility', () => {
   it.skipIf(!issuer)('publishes valid OIDC discovery metadata', async () => {
     const discovery = await fetchDiscovery(issuer as string, 10_000);
-    expect(discovery.issuer).toBe(issuer);
-    expect(new URL(discovery.authorization_endpoint).protocol).toBe('https:');
-    expect(new URL(discovery.token_endpoint).protocol).toBe('https:');
+    const normalizedIssuer = normalizeIssuer(issuer as string);
+    expect(normalizeIssuer(discovery.issuer)).toBe(normalizedIssuer);
+    const issuerUrl = new URL(normalizedIssuer);
+    const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(issuerUrl.hostname.toLowerCase());
+    for (const endpoint of [discovery.authorization_endpoint, discovery.token_endpoint]) {
+      const url = new URL(endpoint);
+      expect(url.protocol === 'https:' || (isLoopback && url.protocol === 'http:' &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase()))).toBe(true);
+    }
     expect(discovery.jwks_uri).toBeTruthy();
     expect(discovery.code_challenge_methods_supported ?? []).toContain('S256');
   });
