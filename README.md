@@ -1,6 +1,6 @@
 # ace-id-sdk
 
-**Current release: 0.2.2**
+**Next planned release: 0.2.3 (release candidate; not published yet)**
 
 Official JavaScript/TypeScript SDK for Ace ID, an OpenID Connect (OIDC) identity provider.
 
@@ -96,7 +96,7 @@ The server entry point is intended for server-side environments only. Do not imp
 The SDK can be loaded directly in a browser without npm or a bundler:
 
 ```html
-<script src="https://unpkg.com/ace-id-sdk@0.2.2/dist/ace-id-sdk.global.js"></script>
+<script src="https://unpkg.com/ace-id-sdk@0.2.3/dist/ace-id-sdk.global.js"></script>
 <script>
   const auth = new AceID.AID({
     issuer: "https://identity.ace-base.cc",
@@ -135,7 +135,7 @@ The React adapter is optional and does not add React to the core SDK runtime. Fo
 
 ## iOS (Swift Package)
 
-A native Swift Package is available under `Package.swift`. It uses AppAuth-iOS for OIDC discovery and Authorization Code + PKCE, with Keychain-backed session storage. See [the iOS SDK guide](docs/ios-sdk.md). The starter intentionally fails closed when a stored access token expires; safe refresh requires persisting AppAuth's authorization state and is not falsely simulated from raw token strings.
+A native Swift Package is available under `Package.swift`. It uses AppAuth-iOS for OIDC discovery and Authorization Code + PKCE, with Keychain-backed session storage. See [the iOS SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-ios). The starter intentionally fails closed when a stored access token expires; safe refresh requires persisting AppAuth's authorization state and is not falsely simulated from raw token strings.
 
 ## Android
 
@@ -174,7 +174,7 @@ lifecycleScope.launch {
 }
 ```
 
-For HTTPS redirect URIs, Android App Links are preferred when the application owns the domain. They require a verified website association through Digital Asset Links. See [the Android SDK guide](docs/android-sdk.md).
+For HTTPS redirect URIs, Android App Links are preferred when the application owns the domain. They require a verified website association through Digital Asset Links. See [the Android SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-android).
 
 ### Build the Android AAR
 
