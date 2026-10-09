@@ -74,9 +74,18 @@ final class AceIDConfigurationTests: XCTestCase {
             clientID: "client",
             redirectURI: URL(string: "com.example.app:/oauth/callback")!
         )
-        XCTAssertTrue(AceIDConfiguration.isSafeRedirectURI(configured.redirectURI))
-        XCTAssertFalse(AceIDConfiguration.isSafeRedirectURI(URL(string: "https://attacker.example/callback")!))
-        XCTAssertFalse(AceIDConfiguration.isSafeRedirectURI(URL(string: "com.example.app:/oauth/callback#fragment")!))
+        XCTAssertTrue(AceIDConfiguration.isAllowedLogoutRedirect(
+            configured.redirectURI,
+            configuredRedirectURI: configured.redirectURI
+        ))
+        XCTAssertFalse(AceIDConfiguration.isAllowedLogoutRedirect(
+            URL(string: "https://attacker.example/callback")!,
+            configuredRedirectURI: configured.redirectURI
+        ))
+        XCTAssertFalse(AceIDConfiguration.isAllowedLogoutRedirect(
+            URL(string: "com.example.app:/oauth/callback#fragment")!,
+            configuredRedirectURI: configured.redirectURI
+        ))
     }
 
     func testEmptyClientIDFails() {
