@@ -179,6 +179,7 @@ class AceID @JvmOverloads constructor(
         }
 
     fun handleCallback(context: Context, callbackUri: Uri): AidSession {
+        val transactionStorage = AidSecureStorage(context, normalizedIssuer, clientId)
         val error = callbackUri.getQueryParameter("error")
         if (!error.isNullOrBlank()) {
             val description = callbackUri.getQueryParameter("error_description")
@@ -186,16 +187,23 @@ class AceID @JvmOverloads constructor(
                 "OIDC authorization failed: $error" +
                     (description?.let { ": $it" } ?: ""),
             )
+            transactionStorage.remove("transaction")
             notifyLoginFailure(exception)
             throw exception
         }
 
         val code = callbackUri.getQueryParameter("code")
-            ?: throw AidException("Authorization callback is missing code")
+            ?: run {
+                transactionStorage.remove("transaction")
+                throw AidException("Authorization callback is missing code")
+            }
         val state = callbackUri.getQueryParameter("state")
-            ?: throw AidException("Authorization callback is missing state")
+            ?: run {
+                transactionStorage.remove("transaction")
+                throw AidException("Authorization callback is missing state")
+            }
 
-        val storage = AidSecureStorage(context, normalizedIssuer, clientId)
+        val storage = transactionStorage
         val transactionJson = storage.get("transaction")
             ?: throw AidException("No pending authorization transaction")
 
@@ -227,32 +235,39 @@ class AceID @JvmOverloads constructor(
             throw AidException("Authorization transaction redirect URI does not match this client")
         }
 
-        val configuration = discover(context)
-        val tokens = AidTokenClient.exchangeCode(
-            configuration = configuration,
-            clientId = clientId,
-            code = code,
-            redirectUri = transaction.redirectUri,
-            codeVerifier = transaction.codeVerifier,
-        )
-
-        val idToken = tokens.idToken
-            ?: throw AidException("OIDC token response is missing id_token")
-
-        val user = AidJwtVerifier.verify(
-            jwt = idToken,
-            configuration = configuration,
-            clientId = clientId,
-            nonce = transaction.nonce,
-        )
-
-        val session = AidSession(tokens = tokens, user = user)
-        AidSessionStore(storage).save(session)
+        // Consume the transaction before exchanging the code. This prevents replay,
+        // including when the token endpoint or ID-token validation fails.
         storage.remove("transaction")
-        accountState.value = user
-        sessionStateFlow.value = AidSessionState.Authenticated(user)
-        notifyLoginSuccess(session)
-        return session
+        try {
+            val configuration = discover(context)
+            val tokens = AidTokenClient.exchangeCode(
+                configuration = configuration,
+                clientId = clientId,
+                code = code,
+                redirectUri = transaction.redirectUri,
+                codeVerifier = transaction.codeVerifier,
+            )
+
+            val idToken = tokens.idToken
+                ?: throw AidException("OIDC token response is missing id_token")
+
+            val user = AidJwtVerifier.verify(
+                jwt = idToken,
+                configuration = configuration,
+                clientId = clientId,
+                nonce = transaction.nonce,
+            )
+
+            val session = AidSession(tokens = tokens, user = user)
+            AidSessionStore(storage).save(session)
+            accountState.value = user
+            sessionStateFlow.value = AidSessionState.Authenticated(user)
+            notifyLoginSuccess(session)
+            return session
+        } catch (error: Throwable) {
+            notifyLoginFailure(error)
+            throw error
+        }
     }
 
     fun getSession(context: Context): AidSession? =
@@ -340,8 +355,11 @@ class AceID @JvmOverloads constructor(
     suspend fun getValidAccessTokenAsync(
         context: Context,
         leewaySeconds: Long = tokenLeewaySeconds,
-    ): String? = refreshMutex.withLock {
-        withContext(Dispatchers.IO) {
+    ): String? = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
+            // Re-read the latest persisted session after acquiring the mutex so a
+            // concurrent caller observes the rotated token rather than refreshing
+            // with a stale refresh token.
             getValidAccessToken(context, leewaySeconds)
         }
     }
