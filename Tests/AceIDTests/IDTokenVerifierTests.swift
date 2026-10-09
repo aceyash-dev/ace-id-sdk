@@ -97,7 +97,7 @@ final class IDTokenVerifierTests: XCTestCase {
         ) { result in
             switch result {
             case .success(let claims): XCTAssertEqual(claims["sub"], "user-ec-123")
-            case .failure(let error): XCTFail("Valid ES256 token was rejected: \\(error)")
+            case .failure(let error): XCTFail("Valid ES256 token was rejected: \(error)")
             }
             finished.fulfill()
         }
