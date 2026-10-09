@@ -146,7 +146,7 @@ enum AceIDIDTokenVerifier {
                   let n = decodeBase64URL(modulus),
                   let e = decodeBase64URL(exponent),
                   n.count >= 256, e.count <= 8 else { return false }
-            keyData = rsaSubjectPublicKeyInfo(modulus: n, exponent: e)
+            keyData = rsaPublicKeyDER(modulus: n, exponent: e)
             attributes = [
                 kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
                 kSecAttrKeyClass as String: kSecAttrKeyClassPublic,
@@ -182,15 +182,9 @@ enum AceIDIDTokenVerifier {
         return SecKeyVerifySignature(key, secAlgorithm, signingInput as CFData, signatureData as CFData, &error)
     }
 
-    private static func rsaSubjectPublicKeyInfo(modulus: Data, exponent: Data) -> Data {
-        let rsaKey = derSequence(derInteger(modulus) + derInteger(exponent))
-        let algorithmIdentifier: [UInt8] = [
-            0x30, 0x0D, 0x06, 0x09, 0x2A, 0x86, 0x48, 0x86,
-            0xF7, 0x0D, 0x01, 0x01, 0x01, 0x05, 0x00
-        ]
-        let bitStringContents = [UInt8(0)] + Array(rsaKey)
-        let bitString = [UInt8(0x03)] + derLength(bitStringContents.count) + bitStringContents
-        return Data(derSequence(algorithmIdentifier + bitString))
+    /// Security.framework expects the PKCS#1 RSAPublicKey DER representation for RSA keys.
+    private static func rsaPublicKeyDER(modulus: Data, exponent: Data) -> Data {
+        Data(derSequence(derInteger(modulus) + derInteger(exponent)))
     }
 
     private static func ecdsaDERSignature(_ signature: Data) -> Data? {
