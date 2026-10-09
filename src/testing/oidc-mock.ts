@@ -49,10 +49,10 @@ export function createMockOIDCIssuer(options: MockOIDCOptions = {}): MockOIDCIss
     if (signal?.aborted) {
       throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
     }
-    const headers = new Headers(request?.headers);
-    if (init.headers !== undefined) {
-      new Headers(init.headers).forEach((value, key) => headers.set(key, value));
-    }
+    // Fetch init.headers replaces Request headers entirely when supplied.
+    const headers = init.headers !== undefined
+      ? new Headers(init.headers)
+      : new Headers(request?.headers);
     const requestBody = init.body !== undefined
       ? init.body
       : request && method !== 'GET' && method !== 'HEAD' ? await request.clone().text() : undefined;
