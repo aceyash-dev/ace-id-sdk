@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-sdk-${{ github.workflow }}-${{ github.ref }}
+  group: ios-sdk-v2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
