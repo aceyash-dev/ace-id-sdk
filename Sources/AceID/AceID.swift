@@ -320,7 +320,7 @@ public final class AceIDClient {
                expiry.timeIntervalSinceNow <= leeway {
                 state.setNeedsTokenRefresh()
             }
-            state.performAction { [weak self] accessToken, _, error in
+            state.performAction(withFreshTokens: { [weak self] accessToken, _, error in
                 guard let self else { return }
                 if let error {
                     if !state.isAuthorized { try? self.storage.clear() }
@@ -338,6 +338,7 @@ public final class AceIDClient {
                     completion(.failure(error))
                 }
             }
+        })
         } catch {
             completion(.failure(error))
         }
@@ -425,24 +426,29 @@ public final class AceIDClient {
     }
 
     private func discoverRevocationEndpoint(completion: @escaping (Result<URL, Error>) -> Void) {
-        var discoveryURL = configuration.issuer
+        let issuer = configuration.issuer
+        var discoveryURL = issuer
         discoveryURL.appendPathComponent(".well-known")
         discoveryURL.appendPathComponent("openid-configuration")
         URLSession.shared.dataTask(with: discoveryURL) { data, response, error in
-            if let error { completion(.failure(error)); return }
-            guard let response = response as? HTTPURLResponse, (200...299).contains(response.statusCode),
-                  let data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let issuerString = json["issuer"] as? String,
-                  Self.normalizedIssuer(issuerString) == Self.normalizedIssuer(self.configuration.issuer.absoluteString),
-                  let endpointString = json["revocation_endpoint"] as? String,
-                  let endpoint = URL(string: endpointString),
-                  endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
-                  endpoint.scheme?.lowercased() == "https" || Self.isLoopbackHTTP(endpoint) else {
-                completion(.failure(AceIDError.revocationEndpointUnavailable))
-                return
+            let result: Result<URL, Error>
+            if let error {
+                result = .failure(error)
+            } else if let response = response as? HTTPURLResponse,
+                      (200...299).contains(response.statusCode),
+                      let data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let issuerString = json["issuer"] as? String,
+                      Self.normalizedIssuer(issuerString) == Self.normalizedIssuer(issuer.absoluteString),
+                      let endpointString = json["revocation_endpoint"] as? String,
+                      let endpoint = URL(string: endpointString),
+                      endpoint.user == nil, endpoint.password == nil, endpoint.fragment == nil,
+                      (endpoint.scheme?.lowercased() == "https" || Self.isLoopbackHTTP(endpoint)) {
+                result = .success(endpoint)
+            } else {
+                result = .failure(AceIDError.revocationEndpointUnavailable)
             }
-            completion(.success(endpoint))
+            DispatchQueue.main.async { completion(result) }
         }.resume()
     }
 
@@ -466,17 +472,24 @@ public final class AceIDClient {
         request.httpBody = fields.map { "\(Self.formEscape($0.key))=\(Self.formEscape($0.value))" }
             .sorted().joined(separator: "&").data(using: .utf8)
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            guard let self else { return }
-            if let error { completion(.failure(error)); return }
-            guard let response = response as? HTTPURLResponse else {
-                completion(.failure(AceIDError.invalidDiscoveryResponse))
-                return
+            let result: Result<Void, Error>
+            if let error {
+                result = .failure(error)
+            } else if let response = response as? HTTPURLResponse {
+                result = (200...299).contains(response.statusCode)
+                    ? .success(())
+                    : .failure(AceIDError.httpFailure(response.statusCode))
+            } else {
+                result = .failure(AceIDError.invalidDiscoveryResponse)
             }
-            guard (200...299).contains(response.statusCode) else {
-                completion(.failure(AceIDError.httpFailure(response.statusCode)))
-                return
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .failure(let error): completion(.failure(error))
+                case .success:
+                    self.revoke(tokens, at: endpoint, index: index + 1, completion: completion)
+                }
             }
-            self.revoke(tokens, at: endpoint, index: index + 1, completion: completion)
         }.resume()
     }
 
