@@ -83,6 +83,27 @@ final class IDTokenVerifierTests: XCTestCase {
         wait(for: [failure], timeout: 2)
     }
 
+    func testAcceptsValidES256Token() {
+        let token = "eyJhbGciOiJFUzI1NiIsImtpZCI6ImFjZWlkLWVjLXRlc3Qta2V5IiwidHlwIjoiSldUIn0.eyJpc3MiOiJodHRwczovL2lkZW50aXR5LmV4YW1wbGUuY29tIiwiYXVkIjoiYWNlaWQtdGVzdC1jbGllbnQiLCJleHAiOjQxMDI0NDQ4MDAsImlhdCI6MTc2MDAwMDAwMCwibm9uY2UiOiJhY2VpZC10ZXN0LW5vbmNlIiwic3ViIjoidXNlci1lYy0xMjMifQ.VKLM6vgFm77EUZcHO_4_ycpx_AdQKmeLTqcAaeNdEj756MHz6csWByqHFz59bfBYQ3Q0FZpf5T6s9FosNxU5lw"
+        let jwks = #"{"keys":[{"kty":"EC","use":"sig","alg":"ES256","kid":"aceid-ec-test-key","crv":"P-256","x":"M2Ul1FM5ikXj52SOeogfo9Vq3_Gg6nf_xerGZbrJ_UI","y":"AvzmtbDnp_n2kp4PJsRDBn2BiyaOPbcl0IMmNAxYpPA"}]}"#
+        let metadata = #"{"issuer":"https://identity.example.com","jwks_uri":"https://identity.example.com/keys"}"#
+        let finished = expectation(description: "valid ES256 token accepted")
+        AceIDIDTokenVerifier.validate(
+            token: token,
+            issuer: URL(string: "https://identity.example.com")!,
+            clientID: "aceid-test-client",
+            expectedNonce: "aceid-test-nonce",
+            session: makeSession(metadata: metadata, jwks: jwks)
+        ) { result in
+            switch result {
+            case .success(let claims): XCTAssertEqual(claims["sub"], "user-ec-123")
+            case .failure(let error): XCTFail("Valid ES256 token was rejected: \\(error)")
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+    }
+
     private func makeSession(metadata: String, jwks: String) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]
