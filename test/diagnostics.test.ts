@@ -52,6 +52,23 @@ describe('safe SDK diagnostics', () => {
     expect(report.capabilities?.refreshAdvertised).toBe(false);
   });
 
+  it('fails when explicit grant metadata excludes authorization_code or signing metadata excludes RS256', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      issuer: ISSUER,
+      authorization_endpoint: ISSUER + '/authorize',
+      token_endpoint: ISSUER + '/token',
+      jwks_uri: ISSUER + '/jwks',
+      response_types_supported: ['code'],
+      code_challenge_methods_supported: ['S256'],
+      grant_types_supported: ['refresh_token'],
+      id_token_signing_alg_values_supported: ['none', 'ES256'],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    const report = await diagnoseAID({ issuer: ISSUER, clientId: 'client', redirectUri: 'https://app.test/callback' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === 'authorization-code')?.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'id-token-signing-algorithm')?.status).toBe('fail');
+  });
+
   it('flags callback mismatches without echoing sensitive data', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       issuer: ISSUER, authorization_endpoint: ISSUER + '/authorize',
