@@ -345,7 +345,7 @@ public final class AceIDClient {
                     completion(.failure(AceIDError.missingSession))
                     return
                 }
-                let persistAndComplete: ([String: String]?) -> Void = { claims in
+                let persistAndComplete: () -> Void = {
                     do {
                         try self.persist(state)
                         completion(.success(accessToken))
@@ -366,12 +366,12 @@ public final class AceIDClient {
                                 try? self.storage.clear()
                                 completion(.failure(error))
                             case .success(let claims):
-                                persistAndComplete(claims)
+                                persistAndComplete()
                             }
                         }
                     }
                 } else {
-                    persistAndComplete(nil)
+                    persistAndComplete()
                 }
             }
         } catch {
