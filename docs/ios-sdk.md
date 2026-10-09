@@ -22,9 +22,9 @@ let client = AceIDClient(configuration: configuration)
 
 Register the exact redirect URI with the identity provider and configure its URL scheme in your application target's URL Types.
 
-## Sign in and handle callbacks
+## Sign in and refresh
 
-Call `signIn(presenting:completion:)` from the main actor with a view controller. Forward the incoming redirect URL from the app or scene delegate to `resumeAuthorizationFlow(with:)`. Only AppAuth's active external user-agent session may consume the callback.
+Call `signIn(presenting:completion:)` on the main actor. Forward the incoming redirect URL from the app or scene delegate to `resumeAuthorizationFlow(with:)`. AppAuth generates and validates state and PKCE values.
 
 ```swift
 client.signIn(presenting: viewController) { result in
@@ -38,15 +38,22 @@ client.signIn(presenting: viewController) { result in
 
 // In the app/scene URL callback:
 _ = client.resumeAuthorizationFlow(with: url)
+
+// Get a fresh token. AppAuth refreshes when needed and rotates persisted state.
+client.validAccessToken { result in
+    // Use the token or handle the authentication error.
+}
 ```
 
-## Session handling
+## Logout and revocation
 
-The default Keychain store keeps serialized session data in a generic-password item marked `WhenUnlockedThisDeviceOnly`. `validAccessToken()` returns only a token that remains valid beyond the configured leeway. This starter intentionally fails closed when an access token expires: safe refresh requires retaining AppAuth's `OIDAuthState` rather than reconstructing it from raw strings. `signOut()` clears local session state; provider end-session and remote revocation are not yet implemented.
+- `signOut(presenting:postLogoutRedirectURI:completion:)` uses the provider's discovered end-session endpoint when available and always clears local state after the logout flow.
+- `revokeTokens(completion:)` posts refresh and access tokens to the provider's advertised RFC 7009 revocation endpoint. It fails closed when the endpoint is absent or revocation fails.
+- `clearSession()` clears only local state; use it when offline logout is intended.
+- The Keychain store uses `WhenUnlockedThisDeviceOnly` and AppAuth's `OIDAuthState` is archived using secure coding, so refresh-token rotation and authorization state survive app restarts.
 
 ## Security notes
 
 - Use HTTPS issuers and exact registered callback URIs in production.
-- Authorization uses AppAuth's OIDC discovery and PKCE implementation.
-- Treat access and refresh tokens as secrets; never log tokens or store them in `UserDefaults`.
-- Protect callbacks with a custom URL scheme or verified Universal Link.
+- Treat access and refresh tokens as secrets; never log them or store them in `UserDefaults`.
+- Claims decoded from an ID token are convenience display data, not a replacement for signature, issuer, audience, nonce, or expiry validation. AppAuth manages the OAuth flow; your API must still validate access tokens server-side.
