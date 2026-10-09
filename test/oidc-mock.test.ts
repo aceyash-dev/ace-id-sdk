@@ -31,7 +31,7 @@ describe('OIDC test issuer fetch compatibility', () => {
   it('applies init header overrides to a Request input', async () => {
     const issuer = createMockOIDCIssuer();
     const request = new Request(issuer.issuer + '/userinfo', {
-      headers: { authorization: 'Bearer original' },
+      headers: { authorization: 'Basic original' },
     });
     const response = await issuer.fetch(request, { headers: { authorization: 'Bearer override' } });
     expect(response.status).toBe(200);
