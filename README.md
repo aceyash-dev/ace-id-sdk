@@ -131,7 +131,7 @@ export function App() {
 }
 ```
 
-The React adapter is optional and does not add React to the core SDK runtime. For SSR and cookie-session security guidance, see [framework adapters](docs/framework-adapters.md). The test issuer helper is exported from `ace-id-sdk/testing`; redacted runtime diagnostics are exported from `ace-id-sdk/diagnostics`.
+The React adapter is optional and does not add React to the core SDK runtime. For SSR and cookie-session security guidance, see [framework and SSR guide](https://docs.ace-base.cc/projects/ace-id-sdk-framework-adapters). The test issuer helper is exported from `ace-id-sdk/testing`; redacted runtime diagnostics are exported from `ace-id-sdk/diagnostics`.
 
 ## iOS (Swift Package)
 
