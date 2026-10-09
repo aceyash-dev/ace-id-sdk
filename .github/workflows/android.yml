@@ -15,7 +15,7 @@ on:
       release_tag:
         description: "GitHub release tag"
         required: true
-        default: "v0.2.2"
+        default: "v0.2.3"
       publish_release:
         description: "Create a GitHub Release after a successful AAR build"
         required: true
@@ -51,6 +51,17 @@ jobs:
         uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
         with:
           gradle-version: "9.6.0"
+
+      - name: Verify release tag matches SDK version
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "v0.2.3" || {
+            echo "This release workflow is scoped to v0.2.3; received: $RELEASE_TAG" >&2
+            exit 1
+          }
 
       - name: Build Android library
         working-directory: android
