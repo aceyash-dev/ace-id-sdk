@@ -48,7 +48,7 @@ client.validAccessToken { result in
 ## Logout and revocation
 
 - `signOut(presenting:postLogoutRedirectURI:completion:)` uses the provider's discovered end-session endpoint when available and always clears local state after the logout flow.
-- `revokeTokens(completion:)` posts refresh and access tokens to the provider's advertised RFC 7009 revocation endpoint. It fails closed when the endpoint is absent or revocation fails.
+- `revokeTokens(completion:)` posts refresh and access tokens to the provider's advertised RFC 7009 revocation endpoint. It fails closed when the endpoint is absent; once revocation is attempted, local state is cleared even if the provider/network reports an error.
 - `clearSession()` clears only local state; use it when offline logout is intended.
 - The Keychain store uses `WhenUnlockedThisDeviceOnly` and AppAuth's `OIDAuthState` is archived using secure coding, so refresh-token rotation and authorization state survive app restarts.
 
