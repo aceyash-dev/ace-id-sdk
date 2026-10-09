@@ -452,17 +452,15 @@ public final class AceIDClient {
                 case .failure(let error):
                     completion(.failure(error))
                 case .success(let endpoint):
-                    self.revoke(tokens, at: endpoint, index: 0) { result in
-                        do {
-                            // Once remote revocation has been attempted, clear local state even
-                            // on network/provider errors so the app cannot keep using stale tokens.
-                            try self.storage.clear()
-                        } catch {
-                            completion(.failure(error))
-                            return
-                        }
-                        completion(result)
+                    do {
+                        // Clear locally before network calls so a killed process cannot retain
+                        // tokens after the caller has requested revocation.
+                        try self.storage.clear()
+                    } catch {
+                        completion(.failure(error))
+                        return
                     }
+                    self.revoke(tokens, at: endpoint, index: 0, completion: completion)
                 }
             }
         } catch {
