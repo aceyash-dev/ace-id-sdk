@@ -38,7 +38,9 @@ describe('SDK request and redirect hardening', () => {
   });
 
   it('attaches a bounded abort signal to discovery requests', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(discoveryDoc()), {
+    const fetchMock = vi.fn<
+      (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    >(async () => new Response(JSON.stringify(discoveryDoc()), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
@@ -46,9 +48,9 @@ describe('SDK request and redirect hardening', () => {
 
     await fetchDiscovery(ISSUER, 2_500);
 
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(init.cache).toBe('no-store');
+    const request = fetchMock.mock.calls[0]?.[1];
+    expect(request?.signal).toBeInstanceOf(AbortSignal);
+    expect(request?.cache).toBe('no-store');
   });
 
   it('rejects unsafe cross-origin logout redirects before network work', async () => {
@@ -57,7 +59,9 @@ describe('SDK request and redirect hardening', () => {
       configurable: true,
       value: { href: 'https://app.example.test/cb', assign },
     });
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn<
+      (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    >();
     vi.stubGlobal('fetch', fetchMock);
     const aid = new AID({
       issuer: ISSUER,
