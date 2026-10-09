@@ -49,7 +49,7 @@ enum AceIDIDTokenVerifier {
                   let data, data.count <= 1_000_000,
                   let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let metadataIssuer = metadata["issuer"] as? String,
-                  normalizedIssuer(metadataIssuer) == normalizedIssuer(issuer.absoluteString),
+                  metadataIssuer == issuer.absoluteString,
                   let jwksString = metadata["jwks_uri"] as? String,
                   let jwksURL = URL(string: jwksString),
                   jwksURL.user == nil, jwksURL.password == nil, jwksURL.fragment == nil,
@@ -232,10 +232,6 @@ enum AceIDIDTokenVerifier {
         var base64 = value.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
         base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
         return Data(base64Encoded: base64)
-    }
-
-    private static func normalizedIssuer(_ value: String) -> String {
-        value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     private static func isLoopbackIssuer(_ issuer: URL) -> Bool {
