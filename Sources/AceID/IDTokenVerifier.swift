@@ -11,6 +11,11 @@ enum AceIDIDTokenVerifier {
         session: URLSession = .shared,
         completion: @escaping (Result<[String: String], Error>) -> Void
     ) {
+        // Bound untrusted JWT input before splitting or decoding to avoid excessive allocation.
+        guard token.utf8.count <= 131_072 else {
+            completion(.failure(AceIDError.invalidIDToken("ID token exceeds the supported size limit.")))
+            return
+        }
         let parts = token.split(separator: ".", omittingEmptySubsequences: false)
         guard parts.count == 3,
               let headerData = decodeBase64URL(String(parts[0])),
@@ -39,7 +44,13 @@ enum AceIDIDTokenVerifier {
         var discoveryURL = issuer
         discoveryURL.appendPathComponent(".well-known")
         discoveryURL.appendPathComponent("openid-configuration")
-        session.dataTask(with: discoveryURL) { data, response, error in
+        var discoveryRequest = URLRequest(
+            url: discoveryURL,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 10
+        )
+        discoveryRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+        session.dataTask(with: discoveryRequest) { data, response, error in
             if let error {
                 completion(.failure(error))
                 return
@@ -59,7 +70,13 @@ enum AceIDIDTokenVerifier {
                 return
             }
 
-            session.dataTask(with: jwksURL) { keyData, keyResponse, keyError in
+            var jwksRequest = URLRequest(
+                url: jwksURL,
+                cachePolicy: .reloadIgnoringLocalCacheData,
+                timeoutInterval: 10
+            )
+            jwksRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+            session.dataTask(with: jwksRequest) { keyData, keyResponse, keyError in
                 if let keyError {
                     completion(.failure(keyError))
                     return
