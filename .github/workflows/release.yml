@@ -5,6 +5,12 @@ on:
     paths:
       - 'package.json'
       - 'package-lock.json'
+      - 'README.md'
+      - 'tsup*.ts'
+      - 'tsconfig*.json'
+      - 'vitest.config.*'
+      - 'src/**'
+      - 'test/**'
       - 'Package.swift'
       - 'Sources/**'
       - 'Tests/**'
