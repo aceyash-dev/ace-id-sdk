@@ -87,12 +87,19 @@ describe('isAuthenticated', () => {
     expect(client.isAuthenticated()).toBe(true);
   });
 
-  it('returns true when expiresAt is unavailable', () => {
+  it('returns false when expiresAt is unavailable', () => {
     const { client } = makeClient(
       makeSession(),
     );
 
-    expect(client.isAuthenticated()).toBe(true);
+    expect(client.isAuthenticated()).toBe(false);
+  });
+
+  it('returns false for non-finite or non-positive expiry values', () => {
+    for (const expiresAt of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1]) {
+      const { client } = makeClient(makeSession({ expiresAt }));
+      expect(client.isAuthenticated()).toBe(false);
+    }
   });
 
   it('returns false for an invalid persisted session', () => {
