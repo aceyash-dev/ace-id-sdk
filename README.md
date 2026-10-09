@@ -132,6 +132,10 @@ export function App() {
 
 The React adapter is optional and does not add React to the core SDK runtime. For SSR and cookie-session security guidance, see [framework adapters](docs/framework-adapters.md). The test issuer helper is exported from `ace-id-sdk/testing`; redacted runtime diagnostics are exported from `ace-id-sdk/diagnostics`.
 
+## iOS (Swift Package)
+
+A native Swift Package is available under `Package.swift`. It uses AppAuth-iOS for OIDC discovery and Authorization Code + PKCE, with Keychain-backed session storage. See [the iOS SDK guide](docs/ios-sdk.md). The starter intentionally fails closed when a stored access token expires; safe refresh requires persisting AppAuth's authorization state and is not falsely simulated from raw token strings.
+
 ## Android
 
 The repository also contains a native Kotlin Android SDK:
