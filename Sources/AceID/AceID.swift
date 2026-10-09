@@ -198,7 +198,11 @@ public final class AceIDClient {
                             completion(.failure(AceIDError.invalidIDToken("The token response did not contain an ID token.")))
                             return
                         }
-                        let expectedNonce = state.lastAuthorizationResponse.request.nonce
+                        guard let expectedNonce = state.lastAuthorizationResponse.request.nonce else {
+                            try? self.storage.clear()
+                            completion(.failure(AceIDError.invalidIDToken("Authorization response is missing the OIDC nonce.")))
+                            return
+                        }
                         AceIDIDTokenVerifier.validate(
                             token: idToken,
                             issuer: self.configuration.issuer,
@@ -536,6 +540,11 @@ public final class AceIDClient {
 
     nonisolated private static func normalizedIssuer(_ value: String) -> String {
         value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    nonisolated private static func isLoopbackIssuer(_ issuer: URL) -> Bool {
+        issuer.scheme?.lowercased() == "http" &&
+        ["localhost", "127.0.0.1", "::1"].contains(issuer.host?.lowercased() ?? "")
     }
 
     nonisolated private static func isLoopbackHTTP(_ url: URL) -> Bool {
