@@ -122,12 +122,8 @@ export class AID {
     const codeVerifier = createCodeVerifier();
     const codeChallenge = await createCodeChallenge(codeVerifier);
     const transaction: AuthTransaction = {
-      state,
-      nonce,
-      codeVerifier,
-      redirectUri: this.config.redirectUri,
-      createdAt: Date.now(),
-      returnTo: options.returnTo,
+      state, nonce, codeVerifier, redirectUri: this.config.redirectUri,
+      createdAt: Date.now(), returnTo: options.returnTo,
     };
 
     try {
@@ -137,14 +133,9 @@ export class AID {
     }
 
     const params = new URLSearchParams({
-      response_type: 'code',
-      client_id: this.config.clientId,
-      redirect_uri: this.config.redirectUri,
-      scope: this.config.scope,
-      state,
-      nonce,
-      code_challenge: codeChallenge,
-      code_challenge_method: 'S256',
+      response_type: 'code', client_id: this.config.clientId,
+      redirect_uri: this.config.redirectUri, scope: this.config.scope,
+      state, nonce, code_challenge: codeChallenge, code_challenge_method: 'S256',
     });
     redirectTo(`${discovery.authorization_endpoint}?${params.toString()}`);
   }
@@ -168,8 +159,7 @@ export class AID {
         'No authorization transaction found — the flow may have expired or been tampered with',
       );
     }
-    if (!Number.isFinite(transaction.createdAt) ||
-        transaction.createdAt > Date.now() ||
+    if (!Number.isFinite(transaction.createdAt) || transaction.createdAt > Date.now() ||
         Date.now() - transaction.createdAt > this.config.transactionTtlMs) {
       this.clearTransaction();
       throw new AIDCallbackError('Authorization transaction has expired or is invalid');
@@ -183,12 +173,9 @@ export class AID {
     try {
       const discovery = await this.getDiscovery();
       const tokens = await exchangeCodeForTokens({
-        tokenEndpoint: discovery.token_endpoint,
-        clientId: this.config.clientId,
-        code: params.code,
-        redirectUri: transaction.redirectUri,
-        codeVerifier: transaction.codeVerifier,
-        timeoutMs: this.config.requestTimeoutMs,
+        tokenEndpoint: discovery.token_endpoint, clientId: this.config.clientId,
+        code: params.code, redirectUri: transaction.redirectUri,
+        codeVerifier: transaction.codeVerifier, timeoutMs: this.config.requestTimeoutMs,
       });
       if (!tokens.idToken) throw new AIDTokenError('Token response is missing "id_token"');
       if (!discovery.jwks_uri) {
@@ -196,16 +183,12 @@ export class AID {
       }
 
       const claims = await verifyIdToken({
-        idToken: tokens.idToken,
-        jwksUri: discovery.jwks_uri,
-        issuer: discovery.issuer,
-        audience: this.config.clientId,
-        nonce: transaction.nonce,
+        idToken: tokens.idToken, jwksUri: discovery.jwks_uri,
+        issuer: discovery.issuer, audience: this.config.clientId, nonce: transaction.nonce,
       });
       const session: AIDSession = {
         user: userFromClaims(claims as Record<string, unknown>),
-        tokens,
-        nonce: transaction.nonce,
+        tokens, nonce: transaction.nonce,
       };
       this.saveSession(session);
       return session;
@@ -237,24 +220,17 @@ export class AID {
     return typeof expiresAt !== 'number' || Date.now() < expiresAt;
   }
 
-  getUser(): AIDUser | null {
-    return this.getSession()?.user ?? null;
-  }
+  getUser(): AIDUser | null { return this.getSession()?.user ?? null; }
 
   /** Synchronous getter; does not perform a network request. */
-  getAccessToken(): string | null {
-    return this.getSession()?.tokens.accessToken ?? null;
-  }
+  getAccessToken(): string | null { return this.getSession()?.tokens.accessToken ?? null; }
 
   /** Concurrent calls share the same refresh operation. */
   async refresh(): Promise<AIDSession> {
     if (this.refreshPromise) return this.refreshPromise;
     this.refreshPromise = this.performRefresh();
-    try {
-      return await this.refreshPromise;
-    } finally {
-      this.refreshPromise = undefined;
-    }
+    try { return await this.refreshPromise; }
+    finally { this.refreshPromise = undefined; }
   }
 
   /** Return a usable access token and refresh it when expired or near expiry. */
@@ -265,10 +241,7 @@ export class AID {
     const session = this.getSession();
     if (!session) return null;
     if (!isTokenExpired(session.tokens, leewaySeconds)) return session.tokens.accessToken;
-    if (!session.tokens.refreshToken) {
-      this.clearSession();
-      return null;
-    }
+    if (!session.tokens.refreshToken) { this.clearSession(); return null; }
     return (await this.refresh()).tokens.accessToken;
   }
 
@@ -276,30 +249,26 @@ export class AID {
     const session = this.getSession();
     this.config.storage.remove(SESSION_KEY);
     this.config.storage.remove(TRANSACTION_KEY);
-
     const safeRedirect = options.redirectTo
       ? validateRedirectTarget(options.redirectTo, this.config.redirectUri)
       : undefined;
     let endSession: string | undefined;
+
     try {
       const discovery = await this.getDiscovery();
       if (discovery.revocation_endpoint && session?.tokens.refreshToken) {
         try {
           await revokeToken({
             revocationEndpoint: discovery.revocation_endpoint,
-            clientId: this.config.clientId,
-            token: session.tokens.refreshToken,
-            tokenTypeHint: 'refresh_token',
-            timeoutMs: this.config.requestTimeoutMs,
+            clientId: this.config.clientId, token: session.tokens.refreshToken,
+            tokenTypeHint: 'refresh_token', timeoutMs: this.config.requestTimeoutMs,
           });
         } catch {
           // Local logout must not depend on remote revocation.
         }
       }
       endSession = discovery.end_session_endpoint;
-    } catch {
-      endSession = undefined;
-    }
+    } catch { endSession = undefined; }
 
     if (endSession) {
       const params = new URLSearchParams();
@@ -319,7 +288,6 @@ export class AID {
       this.clearSession();
       throw new AIDAuthenticationError('The current session does not contain a refresh token');
     }
-
     const discovery = await this.getDiscovery();
     if (!discovery.grant_types_supported?.includes('refresh_token')) {
       throw new AIDAuthenticationError('The identity provider does not advertise refresh_token support');
@@ -328,10 +296,8 @@ export class AID {
     let tokens: AIDTokens;
     try {
       tokens = await refreshTokens({
-        tokenEndpoint: discovery.token_endpoint,
-        clientId: this.config.clientId,
-        refreshToken: session.tokens.refreshToken,
-        scope: session.tokens.scope,
+        tokenEndpoint: discovery.token_endpoint, clientId: this.config.clientId,
+        refreshToken: session.tokens.refreshToken, scope: session.tokens.scope,
         timeoutMs: this.config.requestTimeoutMs,
       });
     } catch (err) {
@@ -345,12 +311,9 @@ export class AID {
         throw new AIDDiscoveryError('Discovery document is missing "jwks_uri" required to verify the refreshed ID token');
       }
       const claims = await verifyIdToken({
-        idToken: tokens.idToken,
-        jwksUri: discovery.jwks_uri,
-        issuer: discovery.issuer,
-        audience: this.config.clientId,
-        nonce: session.nonce,
-        nonceRequired: false,
+        idToken: tokens.idToken, jwksUri: discovery.jwks_uri,
+        issuer: discovery.issuer, audience: this.config.clientId,
+        nonce: session.nonce, nonceRequired: false,
       });
       if (typeof claims.sub !== 'string' || claims.sub !== session.user.sub) {
         throw new AIDTokenError('Refreshed ID token subject does not match the current session');
@@ -359,23 +322,17 @@ export class AID {
     } else if (session.tokens.idToken) {
       tokens.idToken = session.tokens.idToken;
     }
-
     const refreshedSession: AIDSession = { user, tokens, nonce: session.nonce };
     this.saveSession(refreshedSession);
     return refreshedSession;
   }
 
   private saveSession(session: AIDSession): void {
-    try {
-      this.config.storage.set(SESSION_KEY, JSON.stringify(session));
-    } catch (err) {
-      throw new AIDError('STORAGE_ERROR', 'Failed to persist session', err);
-    }
+    try { this.config.storage.set(SESSION_KEY, JSON.stringify(session)); }
+    catch (err) { throw new AIDError('STORAGE_ERROR', 'Failed to persist session', err); }
   }
 
-  private clearSession(): void {
-    this.config.storage.remove(SESSION_KEY);
-  }
+  private clearSession(): void { this.config.storage.remove(SESSION_KEY); }
 
   private loadTransaction(): AuthTransaction | null {
     const raw = this.config.storage.get(TRANSACTION_KEY);
@@ -383,128 +340,92 @@ export class AID {
     try {
       const value: unknown = JSON.parse(raw);
       if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        this.clearTransaction();
-        return null;
+        this.clearTransaction(); return null;
       }
       const transaction = value as Record<string, unknown>;
-      if (
-        typeof transaction.state !== 'string' ||
-        typeof transaction.nonce !== 'string' ||
-        typeof transaction.codeVerifier !== 'string' ||
-        typeof transaction.redirectUri !== 'string' ||
-        typeof transaction.createdAt !== 'number'
-      ) {
-        this.clearTransaction();
-        return null;
+      if (typeof transaction.state !== 'string' || !transaction.state ||
+          typeof transaction.nonce !== 'string' || !transaction.nonce ||
+          typeof transaction.codeVerifier !== 'string' || !transaction.codeVerifier ||
+          typeof transaction.redirectUri !== 'string' || !transaction.redirectUri ||
+          typeof transaction.createdAt !== 'number' || !Number.isFinite(transaction.createdAt)) {
+        this.clearTransaction(); return null;
       }
       return transaction as unknown as AuthTransaction;
-    } catch {
-      this.clearTransaction();
-      return null;
-    }
+    } catch { this.clearTransaction(); return null; }
   }
 
-  private clearTransaction(): void {
-    this.config.storage.remove(TRANSACTION_KEY);
-  }
+  private clearTransaction(): void { this.config.storage.remove(TRANSACTION_KEY); }
 }
 
 interface ExchangeOpts {
-  tokenEndpoint: string;
-  clientId: string;
-  code: string;
-  redirectUri: string;
-  codeVerifier: string;
-  timeoutMs: number;
+  tokenEndpoint: string; clientId: string; code: string;
+  redirectUri: string; codeVerifier: string; timeoutMs: number;
 }
 
 async function exchangeCodeForTokens(opts: ExchangeOpts): Promise<AIDTokens> {
   const body = new URLSearchParams({
-    grant_type: 'authorization_code',
-    code: opts.code,
-    redirect_uri: opts.redirectUri,
-    client_id: opts.clientId,
+    grant_type: 'authorization_code', code: opts.code,
+    redirect_uri: opts.redirectUri, client_id: opts.clientId,
     code_verifier: opts.codeVerifier,
   });
-  const json = await postFormJson(opts.tokenEndpoint, body, 'Token endpoint request failed', opts.timeoutMs);
-  return parseTokenResponse(json.response, json.payload);
+  const { response, payload } = await postFormJson(
+    opts.tokenEndpoint, body, 'Token endpoint request failed', opts.timeoutMs,
+  );
+  return parseTokenResponse(response, payload);
 }
 
 interface RefreshOpts {
-  tokenEndpoint: string;
-  clientId: string;
-  refreshToken: string;
-  scope?: string;
-  timeoutMs: number;
+  tokenEndpoint: string; clientId: string; refreshToken: string;
+  scope?: string; timeoutMs: number;
 }
 
 async function refreshTokens(opts: RefreshOpts): Promise<AIDTokens> {
   const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: opts.refreshToken,
-    client_id: opts.clientId,
+    grant_type: 'refresh_token', refresh_token: opts.refreshToken, client_id: opts.clientId,
   });
   if (opts.scope) body.set('scope', opts.scope);
-  const result = await postFormJson(opts.tokenEndpoint, body, 'Token refresh request failed', opts.timeoutMs);
-  return parseTokenResponse(result.response, result.payload, opts.refreshToken);
+  const { response, payload } = await postFormJson(
+    opts.tokenEndpoint, body, 'Token refresh request failed', opts.timeoutMs,
+  );
+  return parseTokenResponse(response, payload, opts.refreshToken);
 }
 
 interface RevokeTokenOpts {
-  revocationEndpoint: string;
-  clientId: string;
-  token: string;
-  tokenTypeHint?: 'access_token' | 'refresh_token';
-  timeoutMs: number;
+  revocationEndpoint: string; clientId: string; token: string;
+  tokenTypeHint?: 'access_token' | 'refresh_token'; timeoutMs: number;
 }
 
 async function revokeToken(opts: RevokeTokenOpts): Promise<void> {
   const body = new URLSearchParams({ token: opts.token, client_id: opts.clientId });
   if (opts.tokenTypeHint) body.set('token_type_hint', opts.tokenTypeHint);
-  const result = await postFormJson(
-    opts.revocationEndpoint,
-    body,
-    'Token revocation request failed',
-    opts.timeoutMs,
+  const { response } = await postFormJson(
+    opts.revocationEndpoint, body, 'Token revocation request failed', opts.timeoutMs,
   );
-  if (!result.response.ok) {
-    throw new AIDTokenError(`Token revocation request failed: HTTP ${result.response.status}`);
-  }
+  if (!response.ok) throw new AIDTokenError(`Token revocation request failed: HTTP ${response.status}`);
 }
 
 async function postFormJson(
-  url: string,
-  body: URLSearchParams,
-  errorMessage: string,
-  timeoutMs: number,
+  url: string, body: URLSearchParams, errorMessage: string, timeoutMs: number,
 ): Promise<{ response: Response; payload: Record<string, unknown> }> {
   const timeout = withRequestTimeout(timeoutMs);
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: body.toString(),
-      signal: timeout.signal,
-      cache: 'no-store',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: body.toString(), signal: timeout.signal, cache: 'no-store',
     });
     const payload = await readResponseJson(response);
     return { response, payload };
   } catch (err) {
     if (err instanceof AIDTokenError) throw err;
     throw new AIDTokenError(errorMessage, err);
-  } finally {
-    timeout.dispose();
-  }
+  } finally { timeout.dispose(); }
 }
 
 async function readResponseJson(res: Response): Promise<Record<string, unknown>> {
-  const text = await res.text();
   let value: unknown;
-  try {
-    value = text ? JSON.parse(text) as unknown : {};
-  } catch (err) {
+  try { value = await res.json(); }
+  catch (err) {
     throw new AIDTokenError(`Token endpoint returned non-JSON response (HTTP ${res.status})`, err);
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -516,10 +437,8 @@ async function readResponseJson(res: Response): Promise<Record<string, unknown>>
 function validateRedirectTarget(target: string, redirectUri: string): string {
   let candidate: URL;
   let callback: URL;
-  try {
-    candidate = new URL(target);
-    callback = new URL(redirectUri);
-  } catch (err) {
+  try { candidate = new URL(target); callback = new URL(redirectUri); }
+  catch (err) {
     throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must be an absolute URL', err);
   }
   if (candidate.protocol !== 'https:' &&
@@ -541,11 +460,11 @@ function isValidSession(value: unknown): value is AIDSession {
   const session = value as Record<string, unknown>;
   if (!session.user || typeof session.user !== 'object' || Array.isArray(session.user)) return false;
   const user = session.user as Record<string, unknown>;
-  if (typeof user.sub !== 'string' || user.sub.length === 0) return false;
+  if (typeof user.sub !== 'string' || !user.sub) return false;
   if (!session.tokens || typeof session.tokens !== 'object' || Array.isArray(session.tokens)) return false;
   const tokens = session.tokens as Record<string, unknown>;
-  if (typeof tokens.accessToken !== 'string' || tokens.accessToken.length === 0) return false;
-  if (typeof tokens.tokenType !== 'string' || tokens.tokenType.length === 0) return false;
+  if (typeof tokens.accessToken !== 'string' || !tokens.accessToken) return false;
+  if (typeof tokens.tokenType !== 'string' || !tokens.tokenType) return false;
   if (tokens.expiresIn !== undefined && (
     typeof tokens.expiresIn !== 'number' || !Number.isFinite(tokens.expiresIn) || tokens.expiresIn < 0
   )) return false;
@@ -553,7 +472,7 @@ function isValidSession(value: unknown): value is AIDSession {
     typeof tokens.expiresAt !== 'number' || !Number.isFinite(tokens.expiresAt)
   )) return false;
   if (tokens.refreshToken !== undefined && (
-    typeof tokens.refreshToken !== 'string' || tokens.refreshToken.length === 0
+    typeof tokens.refreshToken !== 'string' || !tokens.refreshToken
   )) return false;
   if (tokens.idToken !== undefined && typeof tokens.idToken !== 'string') return false;
   if (tokens.scope !== undefined && typeof tokens.scope !== 'string') return false;
@@ -565,25 +484,21 @@ function isInvalidRefreshTokenError(err: unknown): boolean {
 }
 
 function parseTokenResponse(
-  res: Response,
-  json: Record<string, unknown>,
-  previousRefreshToken?: string,
+  res: Response, json: Record<string, unknown>, previousRefreshToken?: string,
 ): AIDTokens {
   if (!res.ok) {
     const code = typeof json.error === 'string' ? json.error : `HTTP ${res.status}`;
     const desc = typeof json.error_description === 'string' ? ` — ${json.error_description}` : '';
     throw new AIDTokenError(
-      `Token endpoint error: ${code}${desc}`,
-      undefined,
+      `Token endpoint error: ${code}${desc}`, undefined,
       typeof json.error === 'string' ? json.error : undefined,
     );
   }
-  if (typeof json.access_token !== 'string' || json.access_token.length === 0) {
+  if (typeof json.access_token !== 'string' || !json.access_token) {
     throw new AIDTokenError('Token response did not contain a valid access_token');
   }
-  try {
-    return normalizeTokenResponse(json as unknown as TokenResponse, previousRefreshToken);
-  } catch (err) {
+  try { return normalizeTokenResponse(json as unknown as TokenResponse, previousRefreshToken); }
+  catch (err) {
     if (err instanceof AIDError) throw err;
     throw new AIDTokenError('Invalid token response', err);
   }
