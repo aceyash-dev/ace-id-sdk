@@ -7,6 +7,13 @@ const ISSUER = 'https://issuer.test';
 afterEach(() => vi.unstubAllGlobals());
 
 describe('OIDC protocol compatibility', () => {
+
+  it('rejects issuer URLs containing query strings or fragments', async () => {
+    const { normalizeIssuer } = await import('../src/core/discovery.js');
+    expect(() => normalizeIssuer('https://issuer.test?tenant=other')).toThrow(/query string or fragment/i);
+    expect(() => normalizeIssuer('https://issuer.test/#tenant')).toThrow(/query string or fragment/i);
+  });
+
   it('accepts a valid authorization-code and S256 discovery document', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       issuer: ISSUER, authorization_endpoint: ISSUER + '/authorize',
