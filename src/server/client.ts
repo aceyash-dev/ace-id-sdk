@@ -159,14 +159,17 @@ async function requestJson(
       cache: 'no-store',
     });
 
-    let value: unknown;
-    try {
-      value = await response.json();
-    } catch (err) {
-      if (authenticationError) {
-        throw new AIDAuthenticationError(`${errorMessage}: invalid JSON response`, err);
+    const text = await response.text();
+    let value: unknown = {};
+    if (text.trim()) {
+      try {
+        value = JSON.parse(text) as unknown;
+      } catch (err) {
+        if (authenticationError) {
+          throw new AIDAuthenticationError(`${errorMessage}: invalid JSON response`, err);
+        }
+        throw new AIDTokenError(`${errorMessage}: invalid JSON response`, err);
       }
-      throw new AIDTokenError(`${errorMessage}: invalid JSON response`, err);
     }
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       if (authenticationError) throw new AIDAuthenticationError('UserInfo response must be a JSON object');
@@ -202,5 +205,9 @@ function validateRedirectUri(value: string): void {
 function base64Basic(clientId: string, clientSecret: string): string {
   const raw = `${clientId}:${clientSecret}`;
   if (typeof btoa === 'function') return btoa(raw);
-  return Buffer.from(raw, 'utf8').toString('base64');
+  const buffer = (globalThis as typeof globalThis & {
+    Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } };
+  }).Buffer;
+  if (!buffer) throw new AIDError('CONFIGURATION_ERROR', 'Base64 encoding is unavailable');
+  return buffer.from(raw, 'utf8').toString('base64');
 }
