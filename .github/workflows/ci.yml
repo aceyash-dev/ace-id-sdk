@@ -39,4 +39,3 @@ jobs:
         run: npm run build
       - name: Check publish contents
         run: npm pack --dry-run
-
