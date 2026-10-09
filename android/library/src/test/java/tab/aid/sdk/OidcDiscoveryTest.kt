@@ -1,5 +1,6 @@
 package tab.aid.sdk
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -33,15 +34,20 @@ class OidcDiscoveryTest {
     @Test
     fun discoveryRejectsInsecureAndCredentialedEndpoints() {
         val issuer = "https://issuer.example.com"
-        val prefix = "\"issuer\":\"$issuer\",\"authorization_endpoint\":\"$issuer/authorize\",\"token_endpoint\":"
         val invalidEndpoints = listOf(
-            "\"http://issuer.example.com/token\"",
-            "\"https://user@issuer.example.com/token\"",
-            "\"https://issuer.example.com/token#fragment\"",
+            "http://issuer.example.com/token",
+            "https://user@issuer.example.com/token",
+            "https://issuer.example.com/token#fragment",
         )
-        invalidEndpoints.forEach { tokenEndpoint ->
-            val json = "{$prefix$tokenEndpoint}"
-            assertThrows(AidDiscoveryException::class.java) { OidcDiscovery.parse(json, issuer) }
+        invalidEndpoints.forEach { endpoint ->
+            val json = JSONObject()
+                .put("issuer", issuer)
+                .put("authorization_endpoint", "$issuer/authorize")
+                .put("token_endpoint", endpoint)
+                .toString()
+            assertThrows(AidDiscoveryException::class.java) {
+                OidcDiscovery.parse(json, issuer)
+            }
         }
     }
 }
