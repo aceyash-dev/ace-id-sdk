@@ -407,6 +407,8 @@ public final class AceIDClient {
     public func currentSession() throws -> AceIDSession? {
         guard let state = try loadAuthState() else { return nil }
         guard state.isAuthorized else {
+            sessionGeneration = UUID()
+            cachedAuthState = nil
             try storage.clear()
             return nil
         }
@@ -442,6 +444,7 @@ public final class AceIDClient {
                         return
                     }
                     if !state.isAuthorized {
+                        self.sessionGeneration = UUID()
                         self.cachedAuthState = nil
                         try? self.storage.clear()
                     }
@@ -478,6 +481,7 @@ public final class AceIDClient {
                             }
                             switch validation {
                             case .failure(let error):
+                                self.sessionGeneration = UUID()
                                 self.cachedAuthState = nil
                                 try? self.storage.clear()
                                 completion(.failure(error))
