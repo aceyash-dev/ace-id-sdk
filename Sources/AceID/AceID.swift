@@ -296,6 +296,9 @@ public final class AceIDClient {
                 completion(.success(()))
                 return
             }
+            // Clear the local session before opening the browser so process termination
+            // cannot leave the user locally authenticated after they requested logout.
+            try storage.clear()
             OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, discoveryError in
                 DispatchQueue.main.async {
                     guard let self else { return }
