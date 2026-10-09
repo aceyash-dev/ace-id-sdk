@@ -56,4 +56,4 @@ client.validAccessToken { result in
 
 - Use HTTPS issuers and exact registered callback URIs in production.
 - Treat access and refresh tokens as secrets; never log them or store them in `UserDefaults`.
-- Claims decoded from an ID token are convenience display data, not a replacement for signature, issuer, audience, nonce, or expiry validation. AppAuth manages the OAuth flow; your API must still validate access tokens server-side.
+- The SDK verifies RS256 and ES256 ID-token signatures against the issuer's HTTPS JWKS, and checks issuer, audience, authorized party, expiry, issued-at, and the authorization nonce. Unsupported signing algorithms fail closed. Your API must still validate access tokens server-side.
