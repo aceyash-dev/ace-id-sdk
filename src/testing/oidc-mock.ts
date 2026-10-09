@@ -42,9 +42,23 @@ export function createMockOIDCIssuer(options: MockOIDCOptions = {}): MockOIDCIss
   };
 
   const fetchMock: typeof fetch = async (input, init = {}) => {
-    const url = String(input);
-    const method = (init.method ?? 'GET').toUpperCase();
-    const body = typeof init.body === 'string' ? init.body : undefined;
+    const request = input instanceof Request ? input : undefined;
+    const url = request ? request.url : String(input);
+    const method = (init.method ?? request?.method ?? 'GET').toUpperCase();
+    const signal = init.signal === undefined ? request?.signal : init.signal;
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
+    }
+    const headers = new Headers(request?.headers);
+    if (init.headers !== undefined) {
+      new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+    }
+    const requestBody = init.body !== undefined
+      ? init.body
+      : request && method !== 'GET' && method !== 'HEAD' ? await request.clone().text() : undefined;
+    const body = typeof requestBody === 'string'
+      ? requestBody
+      : requestBody instanceof URLSearchParams ? requestBody.toString() : undefined;
     requests.push({ url, method, body });
     const json = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
       status,
@@ -78,7 +92,7 @@ export function createMockOIDCIssuer(options: MockOIDCOptions = {}): MockOIDCIss
       }
     }
     if (url === issuer + '/userinfo') {
-      const auth = new Headers(init.headers).get('authorization');
+      const auth = headers.get('authorization');
       if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
       return json(options.user ?? { sub: 'mock-user', email: 'mock@example.test' });
     }

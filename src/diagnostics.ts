@@ -96,17 +96,36 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
     };
   }
 
-  const responseTypes = discovery.response_types_supported ?? [];
-  const methods = discovery.code_challenge_methods_supported ?? [];
-  const algorithms = discovery.id_token_signing_alg_values_supported ?? [];
-  const authCode = responseTypes.length === 0 || responseTypes.includes('code');
-  const pkce = methods.includes('S256');
+  const responseTypes = readStringArray(discovery.response_types_supported);
+  const methods = readStringArray(discovery.code_challenge_methods_supported);
+  const algorithmsResult = readStringArray(discovery.id_token_signing_alg_values_supported);
+  const grantTypes = readStringArray(discovery.grant_types_supported);
+  const metadataInvalid = responseTypes.invalid || methods.invalid || algorithmsResult.invalid || grantTypes.invalid;
+  if (metadataInvalid) {
+    checks.push({ name: 'discovery-metadata-arrays', status: 'fail', message: 'Provider metadata contains an invalid value for one or more supported-method arrays.' });
+  }
+
+  // An absent response_types_supported field is allowed by OIDC metadata. An explicitly
+  // empty list is not evidence that Authorization Code is supported.
+  const authCode = responseTypes.values === undefined
+    ? !responseTypes.invalid && discovery.response_types_supported === undefined
+    : responseTypes.values.includes('code');
+  const pkce = methods.values?.includes('S256') ?? false;
   checks.push({ name: 'authorization-code', status: authCode ? 'pass' : 'fail', message: authCode ? 'Authorization Code is advertised or response types are unspecified.' : 'Provider metadata does not advertise Authorization Code response support.' });
-  checks.push({ name: 'pkce-s256', status: pkce ? 'pass' : 'warn', message: pkce ? 'Provider metadata advertises S256 PKCE.' : 'Provider metadata does not advertise S256 PKCE; runtime policy still requires S256.' });
+  checks.push({
+    name: 'pkce-s256',
+    status: methods.invalid ? 'fail' : methods.values === undefined ? 'warn' : pkce ? 'pass' : 'fail',
+    message: pkce ? 'Provider metadata advertises S256 PKCE.' : methods.values === undefined && !methods.invalid ? 'Provider metadata does not specify PKCE methods; runtime policy still requires S256.' : 'Provider metadata explicitly does not support the required S256 PKCE method.',
+  });
   checks.push({ name: 'jwks', status: discovery.jwks_uri ? 'pass' : 'fail', message: discovery.jwks_uri ? 'JWKS endpoint is present.' : 'JWKS endpoint is missing; ID-token verification cannot work.' });
   checks.push({ name: 'userinfo', status: discovery.userinfo_endpoint ? 'pass' : 'warn', message: discovery.userinfo_endpoint ? 'UserInfo endpoint is present.' : 'UserInfo endpoint is not advertised.' });
   checks.push({ name: 'logout', status: discovery.end_session_endpoint ? 'pass' : 'warn', message: discovery.end_session_endpoint ? 'Provider logout endpoint is advertised.' : 'Provider logout endpoint is not advertised.' });
-  checks.push({ name: 'refresh', status: (discovery.grant_types_supported ?? []).includes('refresh_token') ? 'pass' : 'warn', message: (discovery.grant_types_supported ?? []).includes('refresh_token') ? 'Refresh-token grant is advertised.' : 'Refresh-token grant is not advertised.' });
+  const refreshAdvertised = grantTypes.values?.includes('refresh_token') ?? false;
+  checks.push({
+    name: 'refresh',
+    status: grantTypes.invalid ? 'fail' : grantTypes.values === undefined ? 'warn' : refreshAdvertised ? 'pass' : 'warn',
+    message: refreshAdvertised ? 'Refresh-token grant is advertised.' : 'Refresh-token grant is not advertised.',
+  });
 
   const failed = checks.some((check) => check.status === 'fail');
   const redirectUri = redirect.origin + redirect.pathname;
@@ -120,10 +139,19 @@ export async function diagnoseAID(config: AIDDiagnosticsConfig): Promise<AIDDiag
     capabilities: {
       authorizationCode: authCode,
       pkceS256: pkce,
-      idTokenSigningAlgorithms: algorithms,
+      idTokenSigningAlgorithms: algorithmsResult.values ?? [],
       userInfoAvailable: Boolean(discovery.userinfo_endpoint),
       logoutAvailable: Boolean(discovery.end_session_endpoint),
-      refreshAdvertised: (discovery.grant_types_supported ?? []).includes('refresh_token'),
+      refreshAdvertised,
     },
   };
+}
+
+
+function readStringArray(value: unknown): { values?: string[]; invalid: boolean } {
+  if (value === undefined) return { invalid: false };
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+    return { invalid: true };
+  }
+  return { values: value, invalid: false };
 }

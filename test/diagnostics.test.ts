@@ -31,6 +31,27 @@ describe('safe SDK diagnostics', () => {
     expect(JSON.stringify(report)).not.toContain('access_token');
   });
 
+  it('fails closed on malformed discovery arrays and explicitly unsupported capabilities', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      issuer: ISSUER,
+      authorization_endpoint: ISSUER + '/authorize',
+      token_endpoint: ISSUER + '/token',
+      jwks_uri: ISSUER + '/jwks',
+      response_types_supported: [],
+      code_challenge_methods_supported: ['plain'],
+      grant_types_supported: 'refresh_token',
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+
+    const report = await diagnoseAID({ issuer: ISSUER, clientId: 'client', redirectUri: 'https://app.test/callback' });
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === 'authorization-code')?.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'pkce-s256')?.status).toBe('fail');
+    expect(report.checks.find((check) => check.name === 'discovery-metadata-arrays')?.status).toBe('fail');
+    expect(report.capabilities?.authorizationCode).toBe(false);
+    expect(report.capabilities?.pkceS256).toBe(false);
+    expect(report.capabilities?.refreshAdvertised).toBe(false);
+  });
+
   it('flags callback mismatches without echoing sensitive data', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
       issuer: ISSUER, authorization_endpoint: ISSUER + '/authorize',
