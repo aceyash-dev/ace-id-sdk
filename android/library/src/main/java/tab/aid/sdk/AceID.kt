@@ -301,6 +301,12 @@ class AceID @JvmOverloads constructor(
             return@synchronized session.tokens.accessToken
         }
 
+        if (expiresAt == null && session.tokens.refreshToken.isNullOrBlank()) {
+            // expires_in is optional in OAuth. Unknown expiry alone is not proof that
+            // this access token has expired, so do not destroy a usable session.
+            return@synchronized session.tokens.accessToken
+        }
+
         if (session.tokens.refreshToken.isNullOrBlank()) {
             store.clear()
             accountState.value = null
