@@ -9,6 +9,17 @@ internal data class AidTransaction(
     val redirectUri: String,
     val createdAt: Long,
 ) {
+    fun hasValidTimestamp(
+        nowMillis: Long = System.currentTimeMillis(),
+        ttlMillis: Long = AceID.DEFAULT_TRANSACTION_TTL_MS,
+        maxFutureSkewMillis: Long = AceID.MAX_TRANSACTION_FUTURE_SKEW_MS,
+    ): Boolean =
+        createdAt > 0L &&
+            ttlMillis > 0L &&
+            maxFutureSkewMillis >= 0L &&
+            createdAt <= nowMillis + maxFutureSkewMillis &&
+            nowMillis - createdAt <= ttlMillis
+
     fun toJson(): String = JSONObject()
         .put("state", state)
         .put("nonce", nonce)
