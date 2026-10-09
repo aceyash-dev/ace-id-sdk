@@ -299,6 +299,12 @@ public final class AceIDClient {
             // Clear the local session before opening the browser so process termination
             // cannot leave the user locally authenticated after they requested logout.
             try storage.clear()
+            // AppAuth requires a non-null registered post-logout redirect URI for its
+            // external-user-agent callback. Without one, complete a local-only logout.
+            guard let postLogoutRedirectURI else {
+                completion(.success(()))
+                return
+            }
             OIDAuthorizationService.discoverConfiguration(forIssuer: configuration.issuer) { [weak self] service, discoveryError in
                 DispatchQueue.main.async {
                     guard let self else { return }
