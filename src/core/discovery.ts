@@ -35,9 +35,9 @@ export function normalizeIssuer(issuer: string): string {
   }
 
   const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  if (url.protocol !== 'https:' && !isLocalhost) {
+  if (url.protocol !== 'https:' && !(isLocalhost && url.protocol === 'http:')) {
     throw new AIDDiscoveryError(
-      'Issuer must use HTTPS (localhost/127.0.0.1 exempt for development)',
+      'Issuer must use HTTPS (HTTP localhost/127.0.0.1 exempt for development)',
     );
   }
 
@@ -84,7 +84,6 @@ export async function fetchDiscovery(
     if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
       throw new AIDDiscoveryError('OIDC discovery document must be a JSON object');
     }
-
     if (typeof doc.issuer !== 'string' || doc.issuer.length === 0) {
       throw new AIDDiscoveryError('OIDC discovery document is missing "issuer"');
     }
@@ -93,21 +92,13 @@ export async function fetchDiscovery(
         `OIDC issuer mismatch: expected ${normalized}, received ${doc.issuer}`,
       );
     }
+
     validateEndpoint(doc.authorization_endpoint, 'authorization_endpoint', normalized);
     validateEndpoint(doc.token_endpoint, 'token_endpoint', normalized);
-    if (doc.userinfo_endpoint !== undefined) {
-      validateEndpoint(doc.userinfo_endpoint, 'userinfo_endpoint', normalized);
-    }
-    if (doc.jwks_uri !== undefined) {
-      validateEndpoint(doc.jwks_uri, 'jwks_uri', normalized);
-    }
-    if (doc.revocation_endpoint !== undefined) {
-      validateEndpoint(doc.revocation_endpoint, 'revocation_endpoint', normalized);
-    }
-    if (doc.end_session_endpoint !== undefined) {
-      validateEndpoint(doc.end_session_endpoint, 'end_session_endpoint', normalized);
-    }
-
+    if (doc.userinfo_endpoint !== undefined) validateEndpoint(doc.userinfo_endpoint, 'userinfo_endpoint', normalized);
+    if (doc.jwks_uri !== undefined) validateEndpoint(doc.jwks_uri, 'jwks_uri', normalized);
+    if (doc.revocation_endpoint !== undefined) validateEndpoint(doc.revocation_endpoint, 'revocation_endpoint', normalized);
+    if (doc.end_session_endpoint !== undefined) validateEndpoint(doc.end_session_endpoint, 'end_session_endpoint', normalized);
     return doc;
   } finally {
     timeout.dispose();
