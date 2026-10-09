@@ -53,7 +53,8 @@ enum AceIDIDTokenVerifier {
                   let jwksString = metadata["jwks_uri"] as? String,
                   let jwksURL = URL(string: jwksString),
                   jwksURL.user == nil, jwksURL.password == nil, jwksURL.fragment == nil,
-                  jwksURL.scheme?.lowercased() == "https" || isLoopbackHTTP(jwksURL) else {
+                  jwksURL.scheme?.lowercased() == "https" ||
+                    (isLoopbackIssuer(issuer) && isLoopbackHTTP(jwksURL)) else {
                 completion(.failure(AceIDError.invalidDiscoveryResponse))
                 return
             }
@@ -142,7 +143,8 @@ enum AceIDIDTokenVerifier {
                   let modulus = jwk["n"] as? String,
                   let exponent = jwk["e"] as? String,
                   let n = decodeBase64URL(modulus),
-                  let e = decodeBase64URL(exponent) else { return false }
+                  let e = decodeBase64URL(exponent),
+                  n.count >= 256, e.count <= 8 else { return false }
             keyData = rsaSubjectPublicKeyInfo(modulus: n, exponent: e)
             attributes = [
                 kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
@@ -233,6 +235,11 @@ enum AceIDIDTokenVerifier {
 
     private static func normalizedIssuer(_ value: String) -> String {
         value.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private static func isLoopbackIssuer(_ issuer: URL) -> Bool {
+        issuer.scheme?.lowercased() == "http" &&
+        ["localhost", "127.0.0.1", "::1"].contains(issuer.host?.lowercased() ?? "")
     }
 
     private static func isLoopbackHTTP(_ url: URL) -> Bool {
