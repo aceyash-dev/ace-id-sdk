@@ -1,8 +1,8 @@
 /**
  * Shared bounded fetch helper for SDK network requests.
  *
- * Uses AbortSignal.timeout where available, with an AbortController fallback
- * for runtimes that do not implement it.
+ * Call dispose only after the response body has been consumed. This keeps the
+ * deadline in effect for both the connection and body-read phases.
  */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
@@ -18,9 +18,9 @@ export function withRequestTimeout(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(
-    new DOMException('The request timed out', 'TimeoutError'),
-  ), timeoutMs);
+  const timer = setTimeout(() => {
+    controller.abort(new DOMException('The request timed out', 'TimeoutError'));
+  }, timeoutMs);
 
   return {
     signal: controller.signal,
