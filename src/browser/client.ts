@@ -106,25 +106,21 @@ export class AID {
 
   private getDiscovery(): Promise<OIDCDiscoveryDocument> {
     if (!this.discoveryPromise) {
-      this.discoveryPromise = fetchDiscovery(
-        this.config.issuer,
-        this.config.requestTimeoutMs,
-      ).catch((err) => {
-        this.discoveryPromise = undefined;
-        throw err;
-      });
+      this.discoveryPromise = fetchDiscovery(this.config.issuer, this.config.requestTimeoutMs)
+        .catch((err) => {
+          this.discoveryPromise = undefined;
+          throw err;
+        });
     }
     return this.discoveryPromise;
   }
 
-  /** Kick off the Authorization Code + PKCE (S256) redirect. */
   async signIn(options: { returnTo?: string } = {}): Promise<void> {
     const discovery = await this.getDiscovery();
     const state = randomString(32);
     const nonce = randomString(32);
     const codeVerifier = createCodeVerifier();
     const codeChallenge = await createCodeChallenge(codeVerifier);
-
     const transaction: AuthTransaction = {
       state,
       nonce,
@@ -153,11 +149,8 @@ export class AID {
     redirectTo(`${discovery.authorization_endpoint}?${params.toString()}`);
   }
 
-  /** Complete the Authorization Code + PKCE flow. */
   async handleCallback(url?: string): Promise<AIDSession> {
-    const currentUrl = url ?? getCurrentUrl();
-    const params = parseCallback(currentUrl);
-
+    const params = parseCallback(url ?? getCurrentUrl());
     if (params.error) {
       this.clearTransaction();
       throw new AIDCallbackError(
@@ -175,7 +168,9 @@ export class AID {
         'No authorization transaction found — the flow may have expired or been tampered with',
       );
     }
-    if (!Number.isFinite(transaction.createdAt) || Date.now() - transaction.createdAt > this.config.transactionTtlMs) {
+    if (!Number.isFinite(transaction.createdAt) ||
+        transaction.createdAt > Date.now() ||
+        Date.now() - transaction.createdAt > this.config.transactionTtlMs) {
       this.clearTransaction();
       throw new AIDCallbackError('Authorization transaction has expired or is invalid');
     }
@@ -195,14 +190,9 @@ export class AID {
         codeVerifier: transaction.codeVerifier,
         timeoutMs: this.config.requestTimeoutMs,
       });
-
-      if (!tokens.idToken) {
-        throw new AIDTokenError('Token response is missing "id_token"');
-      }
+      if (!tokens.idToken) throw new AIDTokenError('Token response is missing "id_token"');
       if (!discovery.jwks_uri) {
-        throw new AIDDiscoveryError(
-          'Discovery document is missing "jwks_uri" (required to verify the ID token)',
-        );
+        throw new AIDDiscoveryError('Discovery document is missing "jwks_uri" (required to verify the ID token)');
       }
 
       const claims = await verifyIdToken({
@@ -212,12 +202,14 @@ export class AID {
         audience: this.config.clientId,
         nonce: transaction.nonce,
       });
-      const user = userFromClaims(claims as Record<string, unknown>);
-      const session: AIDSession = { user, tokens, nonce: transaction.nonce };
+      const session: AIDSession = {
+        user: userFromClaims(claims as Record<string, unknown>),
+        tokens,
+        nonce: transaction.nonce,
+      };
       this.saveSession(session);
       return session;
     } finally {
-      // A transaction is one-time use, including network and verification failures.
       this.clearTransaction();
     }
   }
@@ -266,9 +258,7 @@ export class AID {
   }
 
   /** Return a usable access token and refresh it when expired or near expiry. */
-  async getValidAccessToken(
-    leewaySeconds = DEFAULT_TOKEN_LEEWAY_SECONDS,
-  ): Promise<string | null> {
+  async getValidAccessToken(leewaySeconds = DEFAULT_TOKEN_LEEWAY_SECONDS): Promise<string | null> {
     if (!Number.isFinite(leewaySeconds) || leewaySeconds < 0) {
       throw new AIDError('CONFIGURATION_ERROR', 'leewaySeconds must be a non-negative finite number');
     }
@@ -279,8 +269,7 @@ export class AID {
       this.clearSession();
       return null;
     }
-    const refreshed = await this.refresh();
-    return refreshed.tokens.accessToken;
+    return (await this.refresh()).tokens.accessToken;
   }
 
   async signOut(options: { redirectTo?: string } = {}): Promise<void> {
@@ -292,7 +281,6 @@ export class AID {
       ? validateRedirectTarget(options.redirectTo, this.config.redirectUri)
       : undefined;
     let endSession: string | undefined;
-
     try {
       const discovery = await this.getDiscovery();
       if (discovery.revocation_endpoint && session?.tokens.refreshToken) {
@@ -317,8 +305,8 @@ export class AID {
       const params = new URLSearchParams();
       if (session?.tokens.idToken) params.set('id_token_hint', session.tokens.idToken);
       if (safeRedirect) params.set('post_logout_redirect_uri', safeRedirect);
-      const qs = params.toString();
-      redirectTo(qs ? `${endSession}?${qs}` : endSession);
+      const query = params.toString();
+      redirectTo(query ? `${endSession}?${query}` : endSession);
       return;
     }
     if (safeRedirect) redirectTo(safeRedirect);
@@ -334,9 +322,7 @@ export class AID {
 
     const discovery = await this.getDiscovery();
     if (!discovery.grant_types_supported?.includes('refresh_token')) {
-      throw new AIDAuthenticationError(
-        'The identity provider does not advertise refresh_token support',
-      );
+      throw new AIDAuthenticationError('The identity provider does not advertise refresh_token support');
     }
 
     let tokens: AIDTokens;
@@ -356,9 +342,7 @@ export class AID {
     let user = session.user;
     if (tokens.idToken) {
       if (!discovery.jwks_uri) {
-        throw new AIDDiscoveryError(
-          'Discovery document is missing "jwks_uri" required to verify the refreshed ID token',
-        );
+        throw new AIDDiscoveryError('Discovery document is missing "jwks_uri" required to verify the refreshed ID token');
       }
       const claims = await verifyIdToken({
         idToken: tokens.idToken,
@@ -442,8 +426,8 @@ async function exchangeCodeForTokens(opts: ExchangeOpts): Promise<AIDTokens> {
     client_id: opts.clientId,
     code_verifier: opts.codeVerifier,
   });
-  const res = await postForm(opts.tokenEndpoint, body, 'Token endpoint request failed', opts.timeoutMs);
-  return parseTokenResponse(res);
+  const json = await postFormJson(opts.tokenEndpoint, body, 'Token endpoint request failed', opts.timeoutMs);
+  return parseTokenResponse(json.response, json.payload);
 }
 
 interface RefreshOpts {
@@ -461,8 +445,8 @@ async function refreshTokens(opts: RefreshOpts): Promise<AIDTokens> {
     client_id: opts.clientId,
   });
   if (opts.scope) body.set('scope', opts.scope);
-  const res = await postForm(opts.tokenEndpoint, body, 'Token refresh request failed', opts.timeoutMs);
-  return parseTokenResponse(res, opts.refreshToken);
+  const result = await postFormJson(opts.tokenEndpoint, body, 'Token refresh request failed', opts.timeoutMs);
+  return parseTokenResponse(result.response, result.payload, opts.refreshToken);
 }
 
 interface RevokeTokenOpts {
@@ -476,26 +460,26 @@ interface RevokeTokenOpts {
 async function revokeToken(opts: RevokeTokenOpts): Promise<void> {
   const body = new URLSearchParams({ token: opts.token, client_id: opts.clientId });
   if (opts.tokenTypeHint) body.set('token_type_hint', opts.tokenTypeHint);
-  const res = await postForm(
+  const result = await postFormJson(
     opts.revocationEndpoint,
     body,
     'Token revocation request failed',
     opts.timeoutMs,
   );
-  if (!res.ok) {
-    throw new AIDTokenError(`Token revocation request failed: HTTP ${res.status}`);
+  if (!result.response.ok) {
+    throw new AIDTokenError(`Token revocation request failed: HTTP ${result.response.status}`);
   }
 }
 
-async function postForm(
+async function postFormJson(
   url: string,
   body: URLSearchParams,
   errorMessage: string,
   timeoutMs: number,
-): Promise<Response> {
+): Promise<{ response: Response; payload: Record<string, unknown> }> {
   const timeout = withRequestTimeout(timeoutMs);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -505,11 +489,28 @@ async function postForm(
       signal: timeout.signal,
       cache: 'no-store',
     });
+    const payload = await readResponseJson(response);
+    return { response, payload };
   } catch (err) {
+    if (err instanceof AIDTokenError) throw err;
     throw new AIDTokenError(errorMessage, err);
   } finally {
     timeout.dispose();
   }
+}
+
+async function readResponseJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  let value: unknown;
+  try {
+    value = text ? JSON.parse(text) as unknown : {};
+  } catch (err) {
+    throw new AIDTokenError(`Token endpoint returned non-JSON response (HTTP ${res.status})`, err);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AIDTokenError('Token endpoint response must be a JSON object');
+  }
+  return value as Record<string, unknown>;
 }
 
 function validateRedirectTarget(target: string, redirectUri: string): string {
@@ -529,12 +530,8 @@ function validateRedirectTarget(target: string, redirectUri: string): string {
   if (candidate.username || candidate.password) {
     throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must not contain credentials');
   }
-  // Keep logout redirects on the same origin as the registered callback by default.
   if (candidate.origin !== callback.origin) {
-    throw new AIDError(
-      'CONFIGURATION_ERROR',
-      'signOut redirectTo must share the registered redirect URI origin',
-    );
+    throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must share the registered redirect URI origin');
   }
   return candidate.toString();
 }
@@ -567,17 +564,11 @@ function isInvalidRefreshTokenError(err: unknown): boolean {
   return err instanceof AIDTokenError && err.error === 'invalid_grant';
 }
 
-async function parseTokenResponse(
+function parseTokenResponse(
   res: Response,
+  json: Record<string, unknown>,
   previousRefreshToken?: string,
-): Promise<AIDTokens> {
-  const text = await res.text();
-  let json: Record<string, unknown>;
-  try {
-    json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-  } catch (err) {
-    throw new AIDTokenError(`Token endpoint returned non-JSON response (HTTP ${res.status})`, err);
-  }
+): AIDTokens {
   if (!res.ok) {
     const code = typeof json.error === 'string' ? json.error : `HTTP ${res.status}`;
     const desc = typeof json.error_description === 'string' ? ` — ${json.error_description}` : '';
@@ -607,19 +598,14 @@ function timingSafeEqual(a: string, b: string): boolean {
 
 function getCurrentUrl(): string {
   if (typeof globalThis.location === 'undefined') {
-    throw new AIDCallbackError(
-      'handleCallback requires an explicit URL argument in non-browser environments',
-    );
+    throw new AIDCallbackError('handleCallback requires an explicit URL argument in non-browser environments');
   }
   return globalThis.location.href;
 }
 
 function redirectTo(url: string): void {
   if (typeof globalThis.location === 'undefined') {
-    throw new AIDError(
-      'CONFIGURATION_ERROR',
-      'signIn/signOut require a browser environment (window.location)',
-    );
+    throw new AIDError('CONFIGURATION_ERROR', 'signIn/signOut require a browser environment (window.location)');
   }
   globalThis.location.assign(url);
 }
