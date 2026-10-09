@@ -19,12 +19,14 @@ internal object OidcDiscovery {
         if (uri.rawQuery != null || uri.rawFragment != null) {
             throw AidDiscoveryException("Issuer URL must not contain a query or fragment")
         }
-        val isLocalhost = uri.host.equals("localhost", ignoreCase = true) || uri.host == "127.0.0.1" || uri.host == "::1"
-        if (uri.scheme != "https" && !(isLocalhost && uri.scheme == "http")) {
+        val scheme = uri.scheme.lowercase()
+        val host = uri.host.trim('[', ']').lowercase()
+        val isLocalhost = isLoopbackHost(host)
+        if (scheme != "https" && !(isLocalhost && scheme == "http")) {
             throw AidDiscoveryException("Issuer must use HTTPS (HTTP loopback is allowed only for development)")
         }
         val path = uri.path.orEmpty().trimEnd('/')
-        return URI(uri.scheme.lowercase(), null, uri.host.lowercase(), uri.port, if (path.isEmpty()) null else path, null, null)
+        return URI(scheme, null, host, uri.port, if (path.isEmpty()) null else path, null, null)
             .toASCIIString().trimEnd('/')
     }
 
@@ -102,13 +104,17 @@ internal object OidcDiscovery {
             throw AidDiscoveryException("OIDC discovery \"$name\" must not contain credentials or fragments")
         }
         val issuerUrl = URI(issuer)
-        val allowsHttpLoopback = issuerUrl.host.equals("localhost", true) || issuerUrl.host == "127.0.0.1" || issuerUrl.host == "::1"
-        val endpointLoopback = endpoint.host.equals("localhost", true) || endpoint.host == "127.0.0.1" || endpoint.host == "::1"
-        if (endpoint.scheme != "https" && !(allowsHttpLoopback && endpointLoopback && endpoint.scheme == "http")) {
+        val allowsHttpLoopback = isLoopbackHost(issuerUrl.host?.trim('[', ']'))
+        val endpointLoopback = isLoopbackHost(endpoint.host?.trim('[', ']'))
+        val endpointScheme = endpoint.scheme.lowercase()
+        if (endpointScheme != "https" && !(allowsHttpLoopback && endpointLoopback && endpointScheme == "http")) {
             throw AidDiscoveryException("OIDC discovery \"$name\" must use HTTPS")
         }
         return endpoint.toASCIIString()
     }
+
+    private fun isLoopbackHost(host: String?): Boolean =
+        host?.lowercase() in setOf("localhost", "127.0.0.1", "::1")
 
     private fun org.json.JSONArray?.strings(): List<String> {
         if (this == null) return emptyList()
