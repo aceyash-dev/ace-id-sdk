@@ -154,6 +154,8 @@ public struct AceIDSession: Sendable {
     public let idToken: String?
     public let tokenType: String
     public let expirationDate: Date
+    /// Claims from a cryptographically verified ID token. Restored synchronous sessions
+    /// leave this empty rather than exposing claims decoded from an unverified token. 
     public let claims: [String: String]
 
     public init(accessToken: String, refreshToken: String?, idToken: String?, tokenType: String, expirationDate: Date, claims: [String: String]) {
@@ -513,7 +515,7 @@ public final class AceIDClient {
             idToken: response.idToken,
             tokenType: response.tokenType ?? "Bearer",
             expirationDate: expiry,
-            claims: claims ?? decodeClaims(response.idToken) ?? [:]
+            claims: claims ?? [:]
         )
     }
 
@@ -608,18 +610,4 @@ public final class AceIDClient {
         ["localhost", "127.0.0.1", "::1"].contains(url.host?.lowercased() ?? "")
     }
 
-    private static func decodeClaims(_ jwt: String?) -> [String: String]? {
-        guard let jwt else { return nil }
-        let parts = jwt.split(separator: ".")
-        guard parts.count == 3 else { return nil }
-        var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
-        guard let data = Data(base64Encoded: payload),
-              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return raw.compactMapValues { value in
-            if let string = value as? String { return string }
-            if let number = value as? NSNumber { return number.stringValue }
-            return nil
-        }
-    }
 }
