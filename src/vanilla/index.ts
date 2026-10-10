@@ -9,7 +9,7 @@ import {
   createCodeChallenge,
 } from '../browser/pkce.js';
 import { createAIDFromProjectConfig } from '../browser/project-config.js';
-import type { AIDProjectConfig, AIDConfig } from '../core/types.js';
+import type { AIDProjectConfig, AIDConfig, AIDAuthorizationOptions } from '../core/types.js';
 import {
   AIDError,
   AIDDiscoveryError,
@@ -47,6 +47,6 @@ export {
   AIDCallbackError,
   AIDAuthenticationError,
 };
-export type { AIDProjectConfig, AIDConfig };
+export type { AIDProjectConfig, AIDConfig, AIDAuthorizationOptions };
 
 export default AceID;

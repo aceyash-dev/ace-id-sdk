@@ -33,6 +33,12 @@ console.log(session.user);
 
 Available methods include `signIn()`, `handleCallback()`, `getSession()`, `isAuthenticated()`, `getUser()`, `getAccessToken()`, `getValidAccessToken()`, `signOut()`, and `refresh()`.
 
+### Step-up and risk-based authentication
+
+Browser sign-in accepts OIDC hints such as `prompt`, `loginHint`, `maxAge`, `acrValues`, and `uiLocales`, plus safe provider-specific `additionalParameters`. Android exposes matching options through `AidAuthorizationOptions`; iOS already supports additional authorization parameters. Security-critical values such as `client_id`, `redirect_uri`, `state`, `nonce`, PKCE fields, `request`, and `request_uri` cannot be overridden.
+
+These hints are requests to the identity provider, not proof of identity or a client-side risk score. Adaptive authentication decisions and permission enforcement remain server-side responsibilities.
+
 Browser storage defaults to `sessionStorage` through `SessionStorage`. For Node.js or test environments, provide an explicit storage implementation such as `MemoryStorage`.
 
 `requestTimeoutMs` sets the timeout for discovery, token exchange/refresh/revocation, and UserInfo requests. It must be a positive finite number. The default is 10 seconds. The SDK validates OIDC endpoint URLs and does not accept insecure HTTP endpoints except localhost during local development.
