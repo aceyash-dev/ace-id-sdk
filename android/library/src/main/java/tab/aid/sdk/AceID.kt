@@ -74,7 +74,8 @@ class AceID @JvmOverloads constructor(
     fun discover(context: Context, forceRefresh: Boolean = false): OidcConfiguration =
         AidDiscoveryCache(context, normalizedIssuer, clientId, discoveryCacheTtlMs).get(forceRefresh)
 
-    fun createAuthorizationRequest(configuration: OidcConfiguration): AuthorizationRequest {
+    @JvmOverloads
+    fun createAuthorizationRequest(configuration: OidcConfiguration, options: AidAuthorizationOptions = AidAuthorizationOptions()): AuthorizationRequest {
         require(configuration.issuer == normalizedIssuer) {
             "OIDC configuration issuer does not match this client"
         }
@@ -90,7 +91,7 @@ class AceID @JvmOverloads constructor(
         val codeVerifier = Pkce.createCodeVerifier()
         val codeChallenge = Pkce.createCodeChallenge(codeVerifier)
 
-        val url = Uri.parse(configuration.authorizationEndpoint).buildUpon()
+        val builder = Uri.parse(configuration.authorizationEndpoint).buildUpon()
             .appendQueryParameter("response_type", "code")
             .appendQueryParameter("client_id", clientId)
             .appendQueryParameter("redirect_uri", redirectUri)
@@ -99,8 +100,13 @@ class AceID @JvmOverloads constructor(
             .appendQueryParameter("nonce", nonce)
             .appendQueryParameter("code_challenge", codeChallenge)
             .appendQueryParameter("code_challenge_method", "S256")
-            .build()
-            .toString()
+        options.prompt?.let { builder.appendQueryParameter("prompt", it) }
+        options.loginHint?.let { builder.appendQueryParameter("login_hint", it) }
+        options.maxAgeSeconds?.let { builder.appendQueryParameter("max_age", it.toString()) }
+        if (options.acrValues.isNotEmpty()) builder.appendQueryParameter("acr_values", options.acrValues.joinToString(" "))
+        if (options.uiLocales.isNotEmpty()) builder.appendQueryParameter("ui_locales", options.uiLocales.joinToString(" "))
+        options.additionalParameters.toSortedMap().forEach { (key, value) -> builder.appendQueryParameter(key, value) }
+        val url = builder.build().toString()
 
         return AuthorizationRequest(url, state, nonce, codeVerifier, redirectUri)
     }
@@ -109,8 +115,9 @@ class AceID @JvmOverloads constructor(
     fun startAuthorization(
         context: Context,
         configuration: OidcConfiguration = discover(context),
+        options: AidAuthorizationOptions = AidAuthorizationOptions(),
     ): AuthorizationRequest {
-        val request = createAuthorizationRequest(configuration)
+        val request = createAuthorizationRequest(configuration, options)
         AidSecureStorage(context, normalizedIssuer, clientId).put(
             "transaction",
             AidTransaction(
@@ -125,7 +132,8 @@ class AceID @JvmOverloads constructor(
         return request
     }
 
-    fun login(context: Context, callback: AidSessionCallback) {
+    @JvmOverloads
+    fun login(context: Context, callback: AidSessionCallback, options: AidAuthorizationOptions = AidAuthorizationOptions()) {
         if (activeLoginCallback != null) {
             dispatchCallback(callback) { onError(AidException("An Ace ID login is already in progress")) }
             return
@@ -133,7 +141,7 @@ class AceID @JvmOverloads constructor(
         activeLoginCallback = callback
         callbackScope.launch {
             try {
-                startAuthorizationAsync(context)
+                startAuthorizationAsync(context, options)
             } catch (e: Throwable) {
                 if (activeLoginCallback === callback) activeLoginCallback = null
                 dispatchCallback(callback) { onError(e) }
@@ -141,9 +149,9 @@ class AceID @JvmOverloads constructor(
         }
     }
 
-    private suspend fun startAuthorizationAsync(context: Context): AuthorizationRequest {
+    private suspend fun startAuthorizationAsync(context: Context, options: AidAuthorizationOptions = AidAuthorizationOptions()): AuthorizationRequest {
         val configuration = withContext(Dispatchers.IO) { discover(context) }
-        val request = createAuthorizationRequest(configuration)
+        val request = createAuthorizationRequest(configuration, options)
         withContext(Dispatchers.IO) {
             AidSecureStorage(context, normalizedIssuer, clientId).put(
                 "transaction",
@@ -165,7 +173,9 @@ class AceID @JvmOverloads constructor(
     suspend fun handleCallbackAsync(context: Context, callbackUri: Uri): AidSession =
         withContext(Dispatchers.IO) { handleCallback(context, callbackUri) }
 
-    suspend fun login(context: Context): AidSession =
+    suspend fun login(context: Context): AidSession = login(context, AidAuthorizationOptions())
+
+    suspend fun login(context: Context, options: AidAuthorizationOptions): AidSession =
         suspendCancellableCoroutine { continuation ->
             val callback = object : AidSessionCallback {
                 override fun onSuccess(session: AidSession) {
@@ -176,7 +186,7 @@ class AceID @JvmOverloads constructor(
                     if (continuation.isActive) continuation.resumeWithException(error)
                 }
             }
-            login(context, callback)
+            login(context, callback, options)
             continuation.invokeOnCancellation { if (activeLoginCallback === callback) activeLoginCallback = null }
         }
 

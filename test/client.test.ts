@@ -342,7 +342,34 @@ describe('AID (browser)', () => {
     expect(assign).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects callbacks whose transaction has expired', async () => {
+  it('adds step-up authentication hints to authorization requests', async () => {
+    const assign = mockLocation();
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(discoveryDoc()), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    })) as unknown as typeof fetch;
+    const aid = new AID({ issuer: ISSUER, clientId: 'aid-sdk-test', redirectUri: 'https://app.example.test/cb', storage: new MemoryStorage() });
+    await aid.signIn({
+      prompt: ['login', 'consent'], loginHint: 'alice@example.test', maxAge: 0,
+      acrValues: ['urn:ace:loa:2'], uiLocales: ['en-US', 'fr-FR'], additionalParameters: { organization: 'acme' },
+    });
+    const authUrl = new URL(String(assign.mock.calls[0]?.[0]));
+    expect(authUrl.searchParams.get('prompt')).toBe('login consent');
+    expect(authUrl.searchParams.get('login_hint')).toBe('alice@example.test');
+    expect(authUrl.searchParams.get('max_age')).toBe('0');
+    expect(authUrl.searchParams.get('acr_values')).toBe('urn:ace:loa:2');
+    expect(authUrl.searchParams.get('ui_locales')).toBe('en-US fr-FR');
+    expect(authUrl.searchParams.get('organization')).toBe('acme');
+    expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
+  });
+
+  it('rejects attempts to override OAuth security parameters', async () => {
+    const aid = new AID({ issuer: ISSUER, clientId: 'aid-sdk-test', redirectUri: 'https://app.example.test/cb', storage: new MemoryStorage() });
+    await expect(aid.signIn({ additionalParameters: { STATE: 'bad' } })).rejects.toBeInstanceOf(AIDError);
+    await expect(aid.signIn({ additionalParameters: { request_uri: 'https://attacker.test/request' } })).rejects.toBeInstanceOf(AIDError);
+    await expect(aid.signIn({ maxAge: -1 })).rejects.toBeInstanceOf(AIDError);
+  });
+
+
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify(discoveryDoc()), {
         status: 200,

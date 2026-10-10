@@ -25,6 +25,7 @@ import type {
   AIDTokens,
   AIDUser,
   AuthTransaction,
+  AIDAuthorizationOptions,
 } from '../core/types.js';
 import { parseCallback } from './callback.js';
 import { createCodeChallenge, createCodeVerifier, randomString } from './pkce.js';
@@ -115,7 +116,8 @@ export class AID {
     return this.discoveryPromise;
   }
 
-  async signIn(options: { returnTo?: string } = {}): Promise<void> {
+  async signIn(options: AIDAuthorizationOptions & { returnTo?: string } = {}): Promise<void> {
+    const authorizationOptions = normalizeAuthorizationOptions(options);
     const discovery = await this.getDiscovery();
     const state = randomString(32);
     const nonce = randomString(32);
@@ -137,6 +139,7 @@ export class AID {
       redirect_uri: this.config.redirectUri, scope: this.config.scope,
       state, nonce, code_challenge: codeChallenge, code_challenge_method: 'S256',
     });
+    for (const [key, value] of Object.entries(authorizationOptions)) params.set(key, value);
     redirectTo(`${discovery.authorization_endpoint}?${params.toString()}`);
   }
 
@@ -527,4 +530,63 @@ function redirectTo(url: string): void {
     throw new AIDError('CONFIGURATION_ERROR', 'signIn/signOut require a browser environment (window.location)');
   }
   globalThis.location.assign(url);
+}
+
+
+const RESERVED_AUTHORIZATION_PARAMETERS = new Set([
+  'client_id', 'redirect_uri', 'response_type', 'scope', 'state', 'nonce',
+  'code_challenge', 'code_challenge_method', 'code_verifier', 'grant_type',
+  'request', 'request_uri', 'prompt', 'login_hint', 'max_age', 'acr_values', 'ui_locales',
+]);
+
+function normalizeAuthorizationOptions(options: AIDAuthorizationOptions): Record<string, string> {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new AIDError('CONFIGURATION_ERROR', 'signIn options must be an object');
+  }
+  const normalized: Record<string, string> = {};
+  const addTokenList = (key: string, value: string | string[] | undefined): void => {
+    if (value === undefined) return;
+    if (typeof value !== 'string' && !Array.isArray(value)) {
+      throw new AIDError('CONFIGURATION_ERROR', `${key} must be a string or array of strings`);
+    }
+    const values = Array.isArray(value) ? value : value.trim().split(/\s+/);
+    if (values.length === 0 || values.some(item =>
+      typeof item !== 'string' || !item.trim() || /[\s\u0000-\u001f\u007f]/.test(item)
+    )) {
+      throw new AIDError('CONFIGURATION_ERROR', `${key} must contain non-empty space-free values`);
+    }
+    normalized[key] = values.join(' ');
+  };
+  addTokenList('prompt', options.prompt);
+  if (options.loginHint !== undefined) {
+    if (typeof options.loginHint !== 'string' || !options.loginHint.trim() ||
+        /[\u0000-\u001f\u007f]/.test(options.loginHint)) {
+      throw new AIDError('CONFIGURATION_ERROR', 'loginHint must be non-empty and contain no control characters');
+    }
+    normalized.login_hint = options.loginHint;
+  }
+  if (options.maxAge !== undefined) {
+    if (!Number.isSafeInteger(options.maxAge) || options.maxAge < 0) {
+      throw new AIDError('CONFIGURATION_ERROR', 'maxAge must be a non-negative safe integer in seconds');
+    }
+    normalized.max_age = String(options.maxAge);
+  }
+  addTokenList('acr_values', options.acrValues);
+  addTokenList('ui_locales', options.uiLocales);
+  if (options.additionalParameters !== undefined) {
+    if (!options.additionalParameters || typeof options.additionalParameters !== 'object' ||
+        Array.isArray(options.additionalParameters)) {
+      throw new AIDError('CONFIGURATION_ERROR', 'additionalParameters must be a string map');
+    }
+    for (const [key, value] of Object.entries(options.additionalParameters)) {
+      if (!/^[a-z][a-z0-9_.:-]*$/i.test(key) || RESERVED_AUTHORIZATION_PARAMETERS.has(key.toLowerCase())) {
+        throw new AIDError('CONFIGURATION_ERROR', `additionalParameters cannot override reserved parameter: ${key}`);
+      }
+      if (typeof value !== 'string' || !value.length || /[\u0000-\u001f\u007f]/.test(value)) {
+        throw new AIDError('CONFIGURATION_ERROR', `additionalParameters.${key} must be non-empty and contain no control characters`);
+      }
+      normalized[key] = value;
+    }
+  }
+  return normalized;
 }
