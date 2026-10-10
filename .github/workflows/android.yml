@@ -1,73 +1,84 @@
 name: Android SDK
 
 on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "GitHub release tag"
+        description: "Version for the AAR artifact"
         required: true
-        default: "v0.2.2"
-      publish_release:
-        description: "Create a GitHub Release after a successful AAR build"
-        required: true
-        default: false
-        type: boolean
+        default: "0.2.3"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: android-sdk-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && 'release' || 'ci' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
         with:
           gradle-version: "9.6.0"
 
-      - name: Build Android library
-        working-directory: android
-        run: gradle test assemble
-
-      - name: Prepare AAR
+      - name: Verify release version
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
+          set -euo pipefail
+          test "$RELEASE_TAG" = "0.2.3" || {
+            echo "This build is scoped to version 0.2.3; received: $RELEASE_TAG" >&2
+            exit 1
+          }
+
+      - name: Build and test Android library
+        working-directory: android
+        run: gradle --no-daemon test assemble
+
+      - name: Prepare AAR and SHA-256 manifest
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
           mkdir -p release
-          cp android/library/build/outputs/aar/library-release.aar "${{ github.workspace }}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
+          cp android/library/build/outputs/aar/library-release.aar \
+            "${GITHUB_WORKSPACE}/release/ace-id-sdk-android-${RELEASE_TAG}.aar"
+          cd release
+          sha256sum "ace-id-sdk-android-${RELEASE_TAG}.aar" > "ace-id-sdk-android-${RELEASE_TAG}.aar.sha256"
 
       - name: Upload AAR artifact
-        uses: actions/upload-artifact@v4
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ace-id-sdk-android
-          path: release/*.aar
-
-  release:
-    needs: build
-    if: ${{ needs.build.result == 'success' && inputs.publish_release }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download successful build artifact
-        uses: actions/download-artifact@v5
-        with:
-          name: ace-id-sdk-android
-          path: release
-
-      - name: Create GitHub release and upload AAR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          test -f "release/ace-id-sdk-android-${RELEASE_TAG}.aar"
-          gh release create "${RELEASE_TAG}"             "release/ace-id-sdk-android-${RELEASE_TAG}.aar"             --repo "${GITHUB_REPOSITORY}"             --target "${GITHUB_SHA}"             --title "Android SDK ${RELEASE_TAG}"             --generate-notes
+          name: ace-id-sdk-android-0.2.3
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30

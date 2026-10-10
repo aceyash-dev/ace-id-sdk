@@ -1,0 +1,237 @@
+name: SDK Release Build
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'README.md'
+      - 'tsup*.ts'
+      - 'tsconfig*.json'
+      - 'vitest.config.*'
+      - 'src/**'
+      - 'test/**'
+      - 'Package.swift'
+      - 'Sources/**'
+      - 'Tests/**'
+      - 'android/**'
+      - '.github/workflows/release.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version to build"
+        required: true
+        default: "0.2.3"
+      publish_release:
+        description: "Create a GitHub Release after all build/test jobs pass (main only)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-release-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Validate release request
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version and publishing branch
+        env:
+          RELEASE_VERSION: ${{ inputs.version || '0.2.3' }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release || false }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_VERSION" = "0.2.3" || {
+            echo "This release workflow is scoped to 0.2.3; received: $RELEASE_VERSION" >&2
+            exit 1
+          }
+          if [ "$PUBLISH_RELEASE" = "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Publishing is allowed only from main after the release PR is merged." >&2
+            exit 1
+          fi
+
+  node-package:
+    name: Validate and pack npm SDK
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify package version
+        run: node -e "const p=require('./package.json'); if (p.version !== '0.2.3') throw new Error('Expected package.json version 0.2.3, got '+p.version)"
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Typecheck, test, and build
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Pack public package
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          npm pack --pack-destination release
+          tar -tzf release/ace-id-sdk-0.2.3.tgz > release/npm-tarball-files.txt
+          grep -q '^package/dist/index.js$' release/npm-tarball-files.txt
+          grep -q '^package/dist/index.cjs$' release/npm-tarball-files.txt
+          grep -q '^package/README.md$' release/npm-tarball-files.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-node
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  android-aar:
+    name: Build and test Android AAR
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
+        with:
+          gradle-version: "9.6.0"
+      - name: Test and assemble Android library
+        working-directory: android
+        run: gradle --no-daemon test assemble
+      - name: Prepare versioned AAR
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp android/library/build/outputs/aar/library-release.aar release/ace-id-sdk-android-0.2.3.aar
+          cd release
+          sha256sum ace-id-sdk-android-0.2.3.aar > ace-id-sdk-android-0.2.3.aar.sha256
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-android
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  swift-package:
+    name: Validate and archive Swift Package
+    needs: guard
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Show Swift version
+        run: swift --version
+      - name: Resolve Swift package
+        run: swift package resolve
+      - name: Verify package product
+        run: |
+          set -euo pipefail
+          test -f Package.swift
+          grep -q 'name: "AceID"' Package.swift
+          grep -q 'platforms: \[.iOS(.v15)\]' Package.swift
+      - name: Compile and test the iOS Simulator target
+        shell: bash
+        run: |
+          set -euo pipefail
+          SCHEMES="$(xcodebuild -list -json)"
+          echo "$SCHEMES"
+          SCHEME="$(printf '%s' "$SCHEMES" | jq -r '([.workspace.schemes[]?, .project.schemes[]?] | map(select(. == "AceID" or . == "AceID-Package")) | .[0]) // empty')"
+          if [ -z "$SCHEME" ]; then
+            SCHEME="$(printf '%s' "$SCHEMES" | jq -r '([.workspace.schemes[]?, .project.schemes[]?] | unique | .[0]) // empty')"
+          fi
+          if [ -z "$SCHEME" ]; then
+            echo "No Xcode scheme was generated for the Swift Package."
+            exit 1
+          fi
+          DEVICE="$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.isAvailable == true and (.name | startswith("iPhone "))) | .name] | sort | last')"
+          if [ -z "$DEVICE" ] || [ "$DEVICE" = "null" ]; then
+            echo "No available iPhone Simulator was found."
+            exit 1
+          fi
+          xcodebuild -scheme "$SCHEME" -destination "platform=iOS Simulator,name=$DEVICE" test
+          xcodebuild -scheme "$SCHEME" -destination 'generic/platform=iOS Simulator' build
+      - name: Archive Swift Package sources
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          git archive --format=tar --prefix=ace-id-sdk/ "$GITHUB_SHA" Package.swift Sources Tests README.md | gzip -n > release/ace-id-sdk-swift-source-0.2.3.tar.gz
+          tar -tzf release/ace-id-sdk-swift-source-0.2.3.tar.gz >/dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-swift
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-github-release:
+    name: Publish validated GitHub Release
+    needs: [guard, node-package, android-aar, swift-package]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release == true && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Create release manifest
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$RELEASE_VERSION" = "0.2.3"
+          test -f release/ace-id-sdk-0.2.3.tgz
+          test -f release/ace-id-sdk-android-0.2.3.aar
+          test -f release/ace-id-sdk-swift-source-0.2.3.tar.gz
+          if git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" | grep -q .; then
+            echo "Tag $RELEASE_VERSION already exists; refusing to overwrite or retarget it." >&2
+            exit 1
+          fi
+          sha256sum release/ace-id-sdk-0.2.3.tgz release/ace-id-sdk-android-0.2.3.aar release/ace-id-sdk-swift-source-0.2.3.tar.gz > release/SHA256SUMS
+          cat > release/RELEASE-NOTES.md <<'NOTES'
+          # Ace ID SDK 0.2.3
+
+          This release includes the JavaScript/TypeScript npm package, the source-distributed iOS Swift Package, and the Android AAR.
+
+          ## Install
+
+          - npm: `npm install ace-id-sdk@0.2.3`
+          - Swift Package: add `https://github.com/aceyash-dev/ace-id-sdk` and select version `0.2.3`.
+          - Android: download `ace-id-sdk-android-0.2.3.aar` and verify it against `SHA256SUMS`.
+
+          The artifacts are produced only after the npm checks, Android unit tests/AAR assembly, and iOS Simulator compile/tests pass.
+          NOTES
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_VERSION" \
+            release/ace-id-sdk-0.2.3.tgz \
+            release/ace-id-sdk-android-0.2.3.aar \
+            release/ace-id-sdk-android-0.2.3.aar.sha256 \
+            release/ace-id-sdk-swift-source-0.2.3.tar.gz \
+            release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Ace ID SDK $RELEASE_VERSION" \
+            --notes-file release/RELEASE-NOTES.md

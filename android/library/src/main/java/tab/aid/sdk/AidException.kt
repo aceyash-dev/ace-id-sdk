@@ -13,3 +13,11 @@ class AidDiscoveryException(
 class AidConfigurationException(
     message: String,
 ) : AidException(message)
+
+
+/** OAuth token endpoint error with a machine-readable provider error code. */
+class AidTokenEndpointException(
+    val errorCode: String?,
+    message: String,
+    cause: Throwable? = null,
+) : AidException(message, cause)

@@ -65,8 +65,13 @@ export function isTokenExpired(
   tokens: AIDTokens,
   leewaySeconds = 60,
 ): boolean {
-  if (tokens.expiresAt === undefined) {
-    return false;
+  if (
+    typeof tokens.expiresAt !== 'number' ||
+    !Number.isFinite(tokens.expiresAt) ||
+    tokens.expiresAt <= 0
+  ) {
+    // An access token with unknown expiry is not safe to treat as valid.
+    return true;
   }
 
   return Date.now() >= tokens.expiresAt - leewaySeconds * 1000;

@@ -10,6 +10,7 @@ import {
   AIDDiscoveryError,
   AIDTokenError,
 } from '../core/errors.js';
+import { withRequestTimeout, DEFAULT_REQUEST_TIMEOUT_MS } from '../core/http.js';
 import type { AIDServerConfig, AIDTokens, AIDUser } from '../core/types.js';
 
 interface ResolvedServerConfig {
@@ -17,6 +18,7 @@ interface ResolvedServerConfig {
   clientId: string;
   clientSecret: string;
   scope: string;
+  requestTimeoutMs: number;
 }
 
 export class AIDServer {
@@ -27,45 +29,51 @@ export class AIDServer {
     if (!config || typeof config !== 'object') {
       throw new AIDError('CONFIGURATION_ERROR', 'AIDServer requires a configuration object');
     }
-    if (!config.issuer) throw new AIDError('CONFIGURATION_ERROR', 'config.issuer is required');
-    if (!config.clientId) throw new AIDError('CONFIGURATION_ERROR', 'config.clientId is required');
-    if (!config.clientSecret) {
+    if (typeof config.issuer !== 'string' || !config.issuer.trim()) {
+      throw new AIDError('CONFIGURATION_ERROR', 'config.issuer is required');
+    }
+    if (typeof config.clientId !== 'string' || !config.clientId.trim()) {
+      throw new AIDError('CONFIGURATION_ERROR', 'config.clientId is required');
+    }
+    if (typeof config.clientSecret !== 'string' || !config.clientSecret) {
       throw new AIDError('CONFIGURATION_ERROR', 'config.clientSecret is required');
+    }
+
+    const requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+      throw new AIDError('CONFIGURATION_ERROR', 'requestTimeoutMs must be a positive finite number');
     }
     this.config = {
       issuer: normalizeIssuer(config.issuer),
       clientId: config.clientId,
       clientSecret: config.clientSecret,
       scope: config.scope ?? 'openid profile email',
+      requestTimeoutMs,
     };
   }
 
   private getDiscovery(): Promise<OIDCDiscoveryDocument> {
     if (!this.discoveryPromise) {
-      this.discoveryPromise = fetchDiscovery(this.config.issuer).catch((err) => {
-        this.discoveryPromise = undefined;
-        throw err;
-      });
+      this.discoveryPromise = fetchDiscovery(this.config.issuer, this.config.requestTimeoutMs)
+        .catch((err) => {
+          this.discoveryPromise = undefined;
+          throw err;
+        });
     }
     return this.discoveryPromise;
   }
 
-  /** Expose the discovery document read-only for callers that need it. */
   async discovery(): Promise<OIDCDiscoveryDocument> {
     return this.getDiscovery();
   }
 
-  /**
-   * Exchange an authorization code for tokens using confidential client
-   * authentication (HTTP Basic, client_secret_basic).
-   */
   async exchangeCode(
     code: string,
     redirectUri: string,
     opts: { codeVerifier?: string } = {},
   ): Promise<AIDTokens> {
     if (!code) throw new AIDError('CONFIGURATION_ERROR', 'authorization code is required');
-    if (!redirectUri) throw new AIDError('CONFIGURATION_ERROR', 'redirectUri is required');
+    validateRedirectUri(redirectUri);
 
     const discovery = await this.getDiscovery();
     const body = new URLSearchParams({
@@ -76,10 +84,9 @@ export class AIDServer {
     if (opts.codeVerifier) body.set('code_verifier', opts.codeVerifier);
 
     const basic = base64Basic(this.config.clientId, this.config.clientSecret);
-
-    let res: Response;
-    try {
-      res = await fetch(discovery.token_endpoint, {
+    const { response, payload } = await requestJson(
+      discovery.token_endpoint,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -87,29 +94,24 @@ export class AIDServer {
           Authorization: `Basic ${basic}`,
         },
         body: body.toString(),
-      });
-    } catch (err) {
-      throw new AIDTokenError('Token endpoint request failed', err);
-    }
+      },
+      this.config.requestTimeoutMs,
+      'Token endpoint request failed',
+    );
 
-    const text = await res.text();
-    let json: Record<string, unknown>;
-    try {
-      json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
-    } catch (err) {
-      throw new AIDTokenError(`Token endpoint returned non-JSON (HTTP ${res.status})`, err);
+    if (!response.ok) {
+      const code_ = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`;
+      const desc = typeof payload.error_description === 'string' ? ` (${payload.error_description})` : '';
+      throw new AIDTokenError(
+        `Token endpoint error: ${code_}${desc}`,
+        undefined,
+        typeof payload.error === 'string' ? payload.error : undefined,
+      );
     }
-    if (!res.ok) {
-      const code_ = typeof json.error === 'string' ? json.error : `HTTP ${res.status}`;
-      const desc =
-        typeof json.error_description === 'string' ? ` — ${json.error_description}` : '';
-      throw new AIDTokenError(`Token endpoint error: ${code_}${desc}`);
-    }
-
     try {
-      return normalizeTokens(json);
+      return normalizeTokens(payload);
     } catch (err) {
-      throw new AIDTokenError((err as Error).message, err);
+      throw new AIDTokenError('Invalid token response', err);
     }
   }
 
@@ -120,31 +122,92 @@ export class AIDServer {
       throw new AIDDiscoveryError('Discovery document is missing "userinfo_endpoint"');
     }
 
-    let res: Response;
-    try {
-      res = await fetch(discovery.userinfo_endpoint, {
+    const { response, payload } = await requestJson(
+      discovery.userinfo_endpoint,
+      {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: 'application/json',
         },
-      });
-    } catch (err) {
-      throw new AIDAuthenticationError('UserInfo request failed', err);
+      },
+      this.config.requestTimeoutMs,
+      'UserInfo request failed',
+      true,
+    );
+    if (!response.ok) {
+      throw new AIDAuthenticationError(`UserInfo request failed: HTTP ${response.status}`);
     }
-    if (!res.ok) {
-      throw new AIDAuthenticationError(`UserInfo request failed: HTTP ${res.status}`);
-    }
-    const json = (await res.json()) as Record<string, unknown>;
-    if (typeof json.sub !== 'string') {
+    if (typeof payload.sub !== 'string' || !payload.sub) {
       throw new AIDAuthenticationError('UserInfo response is missing "sub"');
     }
-    return userFromClaims(json);
+    return userFromClaims(payload);
+  }
+}
+
+async function requestJson(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  errorMessage: string,
+  authenticationError = false,
+): Promise<{ response: Response; payload: Record<string, unknown> }> {
+  const timeout = withRequestTimeout(timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: timeout.signal,
+      cache: 'no-store',
+    });
+
+    const text = await response.text();
+    let value: unknown = {};
+    if (text.trim()) {
+      try {
+        value = JSON.parse(text) as unknown;
+      } catch (err) {
+        if (authenticationError) {
+          throw new AIDAuthenticationError(`${errorMessage}: invalid JSON response`, err);
+        }
+        throw new AIDTokenError(`${errorMessage}: invalid JSON response`, err);
+      }
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      if (authenticationError) throw new AIDAuthenticationError('UserInfo response must be a JSON object');
+      throw new AIDTokenError('Token endpoint response must be a JSON object');
+    }
+    return { response, payload: value as Record<string, unknown> };
+  } catch (err) {
+    if (err instanceof AIDTokenError || err instanceof AIDAuthenticationError) throw err;
+    if (authenticationError) throw new AIDAuthenticationError(errorMessage, err);
+    throw new AIDTokenError(errorMessage, err);
+  } finally {
+    timeout.dispose();
+  }
+}
+
+function validateRedirectUri(value: string): void {
+  let uri: URL;
+  try {
+    uri = new URL(value);
+  } catch (err) {
+    throw new AIDError('CONFIGURATION_ERROR', 'redirectUri must be an absolute URL', err);
+  }
+  const local = uri.hostname === 'localhost' || uri.hostname === '127.0.0.1';
+  if ((uri.protocol !== 'https:' && !(local && uri.protocol === 'http:')) ||
+      uri.username || uri.password) {
+    throw new AIDError(
+      'CONFIGURATION_ERROR',
+      'redirectUri must use HTTPS (HTTP localhost is allowed for development) and must not contain credentials',
+    );
   }
 }
 
 function base64Basic(clientId: string, clientSecret: string): string {
   const raw = `${clientId}:${clientSecret}`;
   if (typeof btoa === 'function') return btoa(raw);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (globalThis as any).Buffer.from(raw, 'utf8').toString('base64');
+  const buffer = (globalThis as typeof globalThis & {
+    Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } };
+  }).Buffer;
+  if (!buffer) throw new AIDError('CONFIGURATION_ERROR', 'Base64 encoding is unavailable');
+  return buffer.from(raw, 'utf8').toString('base64');
 }

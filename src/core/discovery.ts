@@ -1,4 +1,5 @@
 import { AIDDiscoveryError } from './errors.js';
+import { withRequestTimeout } from './http.js';
 
 export interface OIDCDiscoveryDocument {
   issuer: string;
@@ -18,60 +19,121 @@ export interface OIDCDiscoveryDocument {
 }
 
 export function normalizeIssuer(issuer: string): string {
-  if (typeof issuer !== 'string' || issuer.length === 0) {
+  if (typeof issuer !== 'string' || issuer.trim().length === 0) {
     throw new AIDDiscoveryError('Issuer must be a non-empty string');
   }
+
   let url: URL;
   try {
     url = new URL(issuer);
   } catch (err) {
-    throw new AIDDiscoveryError(`Issuer is not a valid URL: ${issuer}`, err);
+    throw new AIDDiscoveryError('Issuer is not a valid URL', err);
   }
-  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  if (url.protocol !== 'https:' && !isLocalhost) {
-    throw new AIDDiscoveryError('Issuer must use HTTPS (localhost/127.0.0.1 exempt for development)');
+
+  if (url.username || url.password) {
+    throw new AIDDiscoveryError('Issuer URL must not contain user information');
   }
-  url.search = '';
-  url.hash = '';
-  // Strip trailing slashes on the path
+
+  if (url.search || url.hash) {
+    throw new AIDDiscoveryError('Issuer URL must not contain a query string or fragment');
+  }
+
+  const isLocalhost = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase());
+  if (url.protocol !== 'https:' && !(isLocalhost && url.protocol === 'http:')) {
+    throw new AIDDiscoveryError(
+      'Issuer must use HTTPS (HTTP localhost/127.0.0.1 exempt for development)',
+    );
+  }
+
   url.pathname = url.pathname.replace(/\/+$/, '');
   return url.toString().replace(/\/$/, '');
 }
 
-export async function fetchDiscovery(issuer: string): Promise<OIDCDiscoveryDocument> {
+export async function fetchDiscovery(
+  issuer: string,
+  timeoutMs?: number,
+): Promise<OIDCDiscoveryDocument> {
   const normalized = normalizeIssuer(issuer);
   const url = `${normalized}/.well-known/openid-configuration`;
+  const timeout = withRequestTimeout(timeoutMs);
 
-  let res: Response;
   try {
-    res = await fetch(url, { headers: { Accept: 'application/json' } });
-  } catch (err) {
-    throw new AIDDiscoveryError(`Failed to fetch OIDC discovery document from ${url}`, err);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: timeout.signal,
+        cache: 'no-store',
+      });
+    } catch (err) {
+      throw new AIDDiscoveryError(
+        `Failed to fetch OIDC discovery document from ${url}`,
+        err,
+      );
+    }
+
+    if (!res.ok) {
+      throw new AIDDiscoveryError(`OIDC discovery request failed: HTTP ${res.status}`);
+    }
+
+    let doc: OIDCDiscoveryDocument;
+    try {
+      doc = (await res.json()) as OIDCDiscoveryDocument;
+    } catch (err) {
+      throw new AIDDiscoveryError('OIDC discovery document is not valid JSON', err);
+    }
+
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+      throw new AIDDiscoveryError('OIDC discovery document must be a JSON object');
+    }
+    if (typeof doc.issuer !== 'string' || doc.issuer.length === 0) {
+      throw new AIDDiscoveryError('OIDC discovery document is missing "issuer"');
+    }
+    if (normalizeIssuer(doc.issuer) !== normalized) {
+      throw new AIDDiscoveryError(
+        `OIDC issuer mismatch: expected ${normalized}, received ${doc.issuer}`,
+      );
+    }
+
+    validateEndpoint(doc.authorization_endpoint, 'authorization_endpoint', normalized);
+    validateEndpoint(doc.token_endpoint, 'token_endpoint', normalized);
+    if (doc.userinfo_endpoint !== undefined) validateEndpoint(doc.userinfo_endpoint, 'userinfo_endpoint', normalized);
+    if (doc.jwks_uri !== undefined) validateEndpoint(doc.jwks_uri, 'jwks_uri', normalized);
+    if (doc.revocation_endpoint !== undefined) validateEndpoint(doc.revocation_endpoint, 'revocation_endpoint', normalized);
+    if (doc.end_session_endpoint !== undefined) validateEndpoint(doc.end_session_endpoint, 'end_session_endpoint', normalized);
+    return doc;
+  } finally {
+    timeout.dispose();
   }
-  if (!res.ok) {
-    throw new AIDDiscoveryError(`OIDC discovery request failed: HTTP ${res.status}`);
+}
+
+function validateEndpoint(
+  endpoint: unknown,
+  name: string,
+  issuer: string,
+): asserts endpoint is string {
+  if (typeof endpoint !== 'string' || endpoint.length === 0) {
+    throw new AIDDiscoveryError(`OIDC discovery document is missing "${name}"`);
   }
 
-  let doc: OIDCDiscoveryDocument;
+  let parsed: URL;
   try {
-    doc = (await res.json()) as OIDCDiscoveryDocument;
+    parsed = new URL(endpoint);
   } catch (err) {
-    throw new AIDDiscoveryError('OIDC discovery document is not valid JSON', err);
+    throw new AIDDiscoveryError(`OIDC discovery "${name}" is not a valid URL`, err);
   }
 
-  if (typeof doc.issuer !== 'string' || doc.issuer.length === 0) {
-    throw new AIDDiscoveryError('OIDC discovery document is missing "issuer"');
+  const issuerUrl = new URL(issuer);
+  const allowsHttpLocalhost =
+    issuerUrl.hostname === 'localhost' || issuerUrl.hostname === '127.0.0.1';
+  if (
+    parsed.protocol !== 'https:' &&
+    !(allowsHttpLocalhost && parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'))
+  ) {
+    throw new AIDDiscoveryError(`OIDC discovery "${name}" must use HTTPS`);
   }
-  if (normalizeIssuer(doc.issuer) !== normalized) {
-    throw new AIDDiscoveryError(
-      `OIDC issuer mismatch: expected ${normalized}, received ${doc.issuer}`,
-    );
+  if (parsed.username || parsed.password) {
+    throw new AIDDiscoveryError(`OIDC discovery "${name}" must not contain user information`);
   }
-  if (typeof doc.authorization_endpoint !== 'string' || !doc.authorization_endpoint) {
-    throw new AIDDiscoveryError('OIDC discovery document is missing "authorization_endpoint"');
-  }
-  if (typeof doc.token_endpoint !== 'string' || !doc.token_endpoint) {
-    throw new AIDDiscoveryError('OIDC discovery document is missing "token_endpoint"');
-  }
-  return doc;
 }

@@ -38,6 +38,7 @@ class AceID @JvmOverloads constructor(
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
     private val refreshMutex = Mutex()
+    private val refreshLock = Any()
     @Volatile private var activeLoginCallback: AidSessionCallback? = null
     private val accountState = MutableStateFlow<AidUser?>(null)
     private val sessionStateFlow = MutableStateFlow<AidSessionState>(AidSessionState.Unauthenticated)
@@ -46,6 +47,7 @@ class AceID @JvmOverloads constructor(
 
     companion object {
         const val DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000L
+        const val MAX_TRANSACTION_FUTURE_SKEW_MS = 60 * 1000L
         const val DEFAULT_DISCOVERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
         const val DEFAULT_ACCOUNT_CACHE_TTL_MS = 30 * 1000L
         const val DEFAULT_TOKEN_LEEWAY_SECONDS = 60L
@@ -179,36 +181,24 @@ class AceID @JvmOverloads constructor(
         }
 
     fun handleCallback(context: Context, callbackUri: Uri): AidSession {
-        val error = callbackUri.getQueryParameter("error")
-        if (!error.isNullOrBlank()) {
-            val description = callbackUri.getQueryParameter("error_description")
-            val exception = AidException(
-                "OIDC authorization failed: $error" +
-                    (description?.let { ": $it" } ?: ""),
-            )
-            notifyLoginFailure(exception)
-            throw exception
-        }
-
-        val code = callbackUri.getQueryParameter("code")
-            ?: throw AidException("Authorization callback is missing code")
+        val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         val state = callbackUri.getQueryParameter("state")
             ?: throw AidException("Authorization callback is missing state")
 
-        val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         val transactionJson = storage.get("transaction")
-            ?: throw AidException("No pending authorization transaction")
-
+            ?: run {
+                val error = AidException("No pending authorization transaction")
+                notifyLoginFailure(error)
+                throw error
+            }
         val transaction = try {
             AidTransaction.fromJson(transactionJson)
-        } catch (e: Exception) {
+        } catch (error: Exception) {
+            // A malformed local transaction cannot be safely matched to this callback.
             storage.remove("transaction")
-            throw AidException("Stored authorization transaction is invalid", e)
-        }
-
-        if (System.currentTimeMillis() - transaction.createdAt > DEFAULT_TRANSACTION_TTL_MS) {
-            storage.remove("transaction")
-            throw AidException("Authorization transaction has expired")
+            val failure = AidException("Stored authorization transaction is invalid", error)
+            notifyLoginFailure(failure)
+            throw failure
         }
 
         if (!MessageDigest.isEqual(
@@ -216,43 +206,70 @@ class AceID @JvmOverloads constructor(
                 state.toByteArray(Charsets.UTF_8),
             )
         ) {
+            // Unmatched callbacks must not cancel a legitimate login in progress.
             throw AidException("Authorization state does not match the pending transaction")
         }
 
+        fun failMatchedCallback(error: Throwable): Nothing {
+            storage.remove("transaction")
+            notifyLoginFailure(error)
+            throw error
+        }
+
+        if (!transaction.hasValidTimestamp()) {
+            failMatchedCallback(AidException("Authorization transaction has an invalid timestamp or has expired"))
+        }
+
+        val providerError = callbackUri.getQueryParameter("error")
+        if (!providerError.isNullOrBlank()) {
+            // Do not echo the provider's free-form error_description into SDK messages.
+            failMatchedCallback(AidException("OIDC authorization failed: $providerError"))
+        }
+
+        val code = callbackUri.getQueryParameter("code")
+            ?: failMatchedCallback(AidException("Authorization callback is missing code"))
+
         if (callbackUri.getQueryParameter("redirect_uri") != null) {
-            throw AidException("Unexpected redirect_uri parameter in authorization callback")
+            failMatchedCallback(AidException("Unexpected redirect_uri parameter in authorization callback"))
         }
 
         if (transaction.redirectUri != redirectUri) {
-            throw AidException("Authorization transaction redirect URI does not match this client")
+            failMatchedCallback(AidException("Authorization transaction redirect URI does not match this client"))
         }
 
-        val configuration = discover(context)
-        val tokens = AidTokenClient.exchangeCode(
-            configuration = configuration,
-            clientId = clientId,
-            code = code,
-            redirectUri = transaction.redirectUri,
-            codeVerifier = transaction.codeVerifier,
-        )
-
-        val idToken = tokens.idToken
-            ?: throw AidException("OIDC token response is missing id_token")
-
-        val user = AidJwtVerifier.verify(
-            jwt = idToken,
-            configuration = configuration,
-            clientId = clientId,
-            nonce = transaction.nonce,
-        )
-
-        val session = AidSession(tokens = tokens, user = user)
-        AidSessionStore(storage).save(session)
+        // Consume the transaction before exchanging the code. This prevents replay,
+        // including when the token endpoint or ID-token validation fails.
         storage.remove("transaction")
-        accountState.value = user
-        sessionStateFlow.value = AidSessionState.Authenticated(user)
-        notifyLoginSuccess(session)
-        return session
+        try {
+            val configuration = discover(context)
+            val tokens = AidTokenClient.exchangeCode(
+                configuration = configuration,
+                clientId = clientId,
+                code = code,
+                redirectUri = transaction.redirectUri,
+                codeVerifier = transaction.codeVerifier,
+            )
+
+            val idToken = tokens.idToken
+                ?: throw AidException("OIDC token response is missing id_token")
+
+            val user = AidJwtVerifier.verify(
+                jwt = idToken,
+                configuration = configuration,
+                clientId = clientId,
+                nonce = transaction.nonce,
+            )
+
+            val session = AidSession(tokens = tokens, user = user)
+            AidSessionStore(storage).save(session)
+            accountState.value = user
+            sessionStateFlow.value = AidSessionState.Authenticated(user)
+            notifyLoginSuccess(session)
+            return session
+        } catch (error: Throwable) {
+            notifyLoginFailure(error)
+            throw error
+        }
     }
 
     fun getSession(context: Context): AidSession? =
@@ -264,8 +281,9 @@ class AceID @JvmOverloads constructor(
         leewaySeconds: Long = tokenLeewaySeconds,
     ): Boolean {
         val session = getSession(context) ?: return false
-        val expiresAt = session.tokens.expiresAt ?: return true
-        return expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds
+        if (leewaySeconds < 0) return false
+        val expiresAt = session.tokens.expiresAt ?: return false
+        return expiresAt > 0L && expiresAt > (System.currentTimeMillis() / 1000L) + leewaySeconds
     }
 
     fun getUser(context: Context): AidUser? = getSession(context)?.user.also { accountState.value = it }
@@ -276,20 +294,44 @@ class AceID @JvmOverloads constructor(
     fun getValidAccessToken(
         context: Context,
         leewaySeconds: Long = tokenLeewaySeconds,
-    ): String? {
+    ): String? = synchronized(refreshLock) {
         require(leewaySeconds >= 0) { "leewaySeconds must not be negative" }
 
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)
         val store = AidSessionStore(storage)
-        val session = store.get() ?: return null
+        val session = store.get() ?: return@synchronized null
         val expiresAt = session.tokens.expiresAt
         val now = System.currentTimeMillis() / 1000L
 
-        if (expiresAt == null || expiresAt > now + leewaySeconds) {
-            return session.tokens.accessToken
+        if (expiresAt != null && expiresAt > 0L && expiresAt > now + leewaySeconds) {
+            return@synchronized session.tokens.accessToken
         }
 
-        return refreshSession(context, session, store, storage).tokens.accessToken
+        if (expiresAt == null && session.tokens.refreshToken.isNullOrBlank()) {
+            // expires_in is optional in OAuth. Unknown expiry alone is not proof that
+            // this access token has expired, so do not destroy a usable session.
+            return@synchronized session.tokens.accessToken
+        }
+
+        if (session.tokens.refreshToken.isNullOrBlank()) {
+            store.clear()
+            accountState.value = null
+            sessionStateFlow.value = AidSessionState.Unauthenticated
+            return@synchronized null
+        }
+
+        // All sync and suspend entry points share this lock so a rotating refresh
+        // token cannot be submitted concurrently by two callers.
+        try {
+            refreshSession(context, session, store, storage).tokens.accessToken
+        } catch (error: AidTokenEndpointException) {
+            if (error.errorCode == "invalid_grant") {
+                store.clear()
+                accountState.value = null
+                sessionStateFlow.value = AidSessionState.Unauthenticated
+            }
+            throw error
+        }
     }
 
     private fun refreshSession(
@@ -340,8 +382,11 @@ class AceID @JvmOverloads constructor(
     suspend fun getValidAccessTokenAsync(
         context: Context,
         leewaySeconds: Long = tokenLeewaySeconds,
-    ): String? = refreshMutex.withLock {
-        withContext(Dispatchers.IO) {
+    ): String? = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
+            // Re-read the latest persisted session after acquiring the mutex so a
+            // concurrent caller observes the rotated token rather than refreshing
+            // with a stale refresh token.
             getValidAccessToken(context, leewaySeconds)
         }
     }
