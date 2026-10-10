@@ -16,17 +16,6 @@ export interface AIDConfig {
   requestTimeoutMs?: number;
 }
 
-/** Optional OIDC hints for step-up and risk-based authorization. */
-export interface AIDAuthorizationOptions {
-  prompt?: string | string[];
-  loginHint?: string;
-  /** Maximum authentication age in seconds; zero requests fresh authentication. */
-  maxAge?: number;
-  acrValues?: string[];
-  uiLocales?: string[];
-  additionalParameters?: Record<string, string>;
-}
-
 export interface AIDServerConfig {
   issuer: string;
   clientId: string;
