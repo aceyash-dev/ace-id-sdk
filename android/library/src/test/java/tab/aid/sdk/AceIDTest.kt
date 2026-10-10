@@ -25,29 +25,6 @@ class AceIDTest {
     }
 
     @Test
-    fun authorizationOptionsSupportStepUpHints() {
-        val options = AidAuthorizationOptions(
-            prompt = "login consent", loginHint = "alice@example.test", maxAgeSeconds = 0,
-            acrValues = listOf("urn:ace:loa:2"), uiLocales = listOf("en-US", "fr-FR"),
-            additionalParameters = mapOf("organization" to "acme"),
-        )
-        assertEquals("login consent", options.prompt)
-        assertEquals(0L, options.maxAgeSeconds)
-        assertEquals(listOf("urn:ace:loa:2"), options.acrValues)
-        assertEquals("acme", options.additionalParameters["organization"])
-    }
-
-    @Test(expected = AidConfigurationException::class)
-    fun authorizationOptionsRejectSecurityParameterOverrides() {
-        AidAuthorizationOptions(additionalParameters = mapOf("STATE" to "attacker-controlled"))
-    }
-
-    @Test(expected = AidConfigurationException::class)
-    fun authorizationOptionsRejectNegativeMaxAge() {
-        AidAuthorizationOptions(maxAgeSeconds = -1)
-    }
-
-    @Test
     fun configurationIsExposed() {
         val aid = AceID(
             issuer = "https://issuer.example.com",

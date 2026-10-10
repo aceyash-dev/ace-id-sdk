@@ -201,7 +201,7 @@ public final class AceIDClient {
         completion: @escaping (Result<AceIDSession, Error>) -> Void
     ) {
         guard !additionalParameters.keys.contains(where: {
-            ["client_id", "redirect_uri", "response_type", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "code_verifier"].contains($0.lowercased())
+            ["client_id", "redirect_uri", "response_type", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "code_verifier", "grant_type", "request", "request_uri"].contains($0.lowercased())
         }) else {
             completion(.failure(AceIDError.invalidConfiguration("Additional authorization parameters cannot override OAuth security parameters.")))
             return
