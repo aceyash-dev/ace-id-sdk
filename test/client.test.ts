@@ -371,7 +371,6 @@ describe('AID (browser)', () => {
 
 
   it('rejects callbacks whose transaction has expired', async () => {
-  it('rejects callbacks whose transaction has expired', async () => {
     globalThis.fetch = vi.fn(async () =>
       new Response(JSON.stringify(discoveryDoc()), {
         status: 200,
