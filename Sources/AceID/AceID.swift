@@ -220,6 +220,16 @@ public final class AceIDClient {
             completion(.failure(AceIDError.invalidConfiguration("Additional authorization parameters cannot override OAuth security parameters.")))
             return
         }
+        let requestedMaxAge: Int?
+        if let parameter = additionalParameters.first(where: { $0.key.lowercased() == "max_age" }) {
+            guard parameter.key == "max_age", let parsed = Int(parameter.value), parsed >= 0 else {
+                completion(.failure(AceIDError.invalidConfiguration("max_age must be a non-negative integer in seconds.")))
+                return
+            }
+            requestedMaxAge = parsed
+        } else {
+            requestedMaxAge = nil
+        }
         let generation = UUID()
         authorizationGeneration = generation
         sessionGeneration = UUID()
@@ -275,7 +285,8 @@ public final class AceIDClient {
                             token: idToken,
                             issuer: self.configuration.issuer,
                             clientID: self.configuration.clientID,
-                            expectedNonce: expectedNonce
+                            expectedNonce: expectedNonce,
+                            maxAgeSeconds: requestedMaxAge
                         ) { validation in
                             DispatchQueue.main.async {
                                 guard self.authorizationGeneration == generation else {
