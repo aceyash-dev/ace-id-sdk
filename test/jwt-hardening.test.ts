@@ -1,92 +1,64 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
-import { verifyIdToken } from '../src/core/jwt.js';
+import { describe, expect, it } from 'vitest';
+import { validateVerifiedIdTokenClaims } from '../src/core/jwt.js';
 
 const ISSUER = 'https://issuer.example.test';
 const CLIENT_ID = 'ace-sdk-test';
-const JWKS_URI = `${ISSUER}/jwks`;
-let privateKey: Awaited<ReturnType<typeof generateKeyPair>>['privateKey'];
-let publicJwk: Record<string, unknown>;
 
-beforeAll(async () => {
-  const pair = await generateKeyPair('RS256');
-  privateKey = pair.privateKey;
-  publicJwk = {
-    ...(await exportJWK(pair.publicKey)),
-    kid: 'test-key',
-    alg: 'RS256',
-    use: 'sig',
-  };
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
-async function signToken(claims: JWTPayload = {}, audience: string | string[] = CLIENT_ID, includeAuthTime = true) {
+function claims(overrides: Record<string, unknown> = {}) {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({
-    ...(includeAuthTime ? { auth_time: now - 10 } : {}),
-    ...claims,
-  })
-    .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
-    .setIssuer(ISSUER)
-    .setAudience(audience)
-    .setSubject('user-123')
-    .setIssuedAt(now)
-    .setExpirationTime(now + 300)
-    .sign(privateKey);
+  return {
+    iss: ISSUER,
+    aud: CLIENT_ID,
+    sub: 'user-123',
+    iat: now,
+    exp: now + 300,
+    nonce: 'expected',
+    auth_time: now - 10,
+    ...overrides,
+  };
 }
 
-function mockJwks(): void {
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ keys: [publicJwk] }), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
-  })));
-}
+const options = {
+  issuer: ISSUER,
+  audience: CLIENT_ID,
+  nonce: 'expected',
+  maxAgeSeconds: 60,
+};
 
 describe('ID token claim hardening', () => {
-  it('accepts a recent authentication when max_age is requested', async () => {
-    mockJwks();
-    const token = await signToken({ nonce: 'expected' });
-    await expect(verifyIdToken({
-      idToken: token, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
-      nonce: 'expected', maxAgeSeconds: 60,
-    })).resolves.toMatchObject({ sub: 'user-123' });
+  it('accepts a correctly issued token with a recent authentication time', () => {
+    expect(() => validateVerifiedIdTokenClaims(claims(), options)).not.toThrow();
   });
 
-  it('enforces auth_time for max_age and rejects stale authentication', async () => {
-    mockJwks();
-    const now = Math.floor(Date.now() / 1000);
-    const token = await signToken({ auth_time: now - 600, nonce: 'expected' });
-    await expect(verifyIdToken({
-      idToken: token, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
-      nonce: 'expected', maxAgeSeconds: 30,
-    })).rejects.toThrow(/exceeds the requested max_age/i);
+  it('requires a valid iat and rejects future-issued tokens', () => {
+    expect(() => validateVerifiedIdTokenClaims(claims({ iat: undefined }), options))
+      .toThrow(/iat/i);
+    expect(() => validateVerifiedIdTokenClaims(claims({
+      iat: Math.floor(Date.now() / 1000) + 120,
+    }), options)).toThrow(/future/i);
   });
 
-  it('requires auth_time when max_age was requested', async () => {
-    mockJwks();
-    const token = await signToken({ nonce: 'expected' }, CLIENT_ID, false);
-    await expect(verifyIdToken({
-      idToken: token, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
-      nonce: 'expected', maxAgeSeconds: 0,
-    })).rejects.toThrow(/auth_time/i);
+  it('enforces auth_time for max_age and rejects stale authentication', () => {
+    expect(() => validateVerifiedIdTokenClaims(claims({
+      auth_time: Math.floor(Date.now() / 1000) - 600,
+    }), options)).toThrow(/exceeds the requested max_age/i);
   });
 
-  it('rejects a mismatched authorized party and multiple audiences without azp', async () => {
-    mockJwks();
-    const wrongAzp = await signToken({ nonce: 'expected', azp: 'another-client' });
-    await expect(verifyIdToken({
-      idToken: wrongAzp, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
-      nonce: 'expected',
-    })).rejects.toThrow(/authorized party/i);
+  it('requires auth_time when max_age was requested', () => {
+    expect(() => validateVerifiedIdTokenClaims(claims({ auth_time: undefined }), options))
+      .toThrow(/auth_time/i);
+  });
 
-    const multipleAudiences = await signToken({ nonce: 'expected' }, [CLIENT_ID, 'another-client']);
-    await expect(verifyIdToken({
-      idToken: multipleAudiences, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
-      nonce: 'expected',
-    })).rejects.toThrow(/multiple audiences/i);
+  it('rejects a mismatched authorized party and multiple audiences without azp', () => {
+    expect(() => validateVerifiedIdTokenClaims(claims({ azp: 'another-client' }), options))
+      .toThrow(/authorized party/i);
+    expect(() => validateVerifiedIdTokenClaims(claims({
+      aud: [CLIENT_ID, 'another-client'],
+    }), options)).toThrow(/multiple audiences/i);
+  });
+
+  it('requires nonce on initial authentication', () => {
+    expect(() => validateVerifiedIdTokenClaims(claims({ nonce: 'wrong' }), options))
+      .toThrow(/nonce mismatch/i);
   });
 });
