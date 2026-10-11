@@ -45,6 +45,7 @@ internal object AidJwtVerifier {
         if (!audienceContains(claims.opt("aud"), clientId)) {
             throw AidException("ID token audience does not contain this client")
         }
+        validateIssuedAtAndAuthorizedParty(claims, clientId)
 
         val now = System.currentTimeMillis() / 1000L
         val expiresAt = claims.optLong("exp", Long.MIN_VALUE)
@@ -143,6 +144,28 @@ internal object AidJwtVerifier {
         "RS384" -> "SHA384withRSA"
         "RS512" -> "SHA512withRSA"
         else -> throw AidException("Unsupported ID token signing algorithm: " + algorithm)
+    }
+
+    internal fun validateIssuedAtAndAuthorizedParty(
+        claims: JSONObject,
+        clientId: String,
+        nowSeconds: Long = System.currentTimeMillis() / 1000L,
+    ) {
+        val issuedAt = claims.opt("iat") as? Number
+            ?: throw AidException("ID token is missing a valid iat claim")
+        val issuedAtSeconds = issuedAt.toDouble()
+        if (!issuedAtSeconds.isFinite() || issuedAtSeconds > nowSeconds + CLOCK_SKEW_SECONDS) {
+            throw AidException("ID token iat claim is invalid or in the future")
+        }
+
+        val authorizedParty = if (claims.has("azp")) claims.optString("azp") else null
+        if (authorizedParty != null && authorizedParty != clientId) {
+            throw AidException("ID token authorized party does not match this client")
+        }
+        val audience = claims.opt("aud")
+        if (audience is JSONArray && audience.length() > 1 && authorizedParty != clientId) {
+            throw AidException("ID token with multiple audiences must identify this client as authorized party")
+        }
     }
 
     private fun audienceContains(value: Any?, clientId: String): Boolean = when (value) {
