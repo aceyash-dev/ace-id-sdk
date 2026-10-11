@@ -37,7 +37,7 @@ Available methods include `signIn()`, `handleCallback()`, `getSession()`, `isAut
 
 Browser sign-in accepts OIDC hints such as `prompt`, `loginHint`, `maxAge`, `acrValues`, and `uiLocales`, plus safe provider-specific `additionalParameters`. Android exposes matching options through `AidAuthorizationOptions`; iOS already supports additional authorization parameters. Security-critical values such as `client_id`, `redirect_uri`, `state`, `nonce`, PKCE fields, `request`, and `request_uri` cannot be overridden.
 
-These hints are requests to the identity provider, not proof of identity or a client-side risk score. Adaptive authentication decisions and permission enforcement remain server-side responsibilities.
+These hints are requests to the identity provider, not proof of identity or a client-side risk score. When `maxAge`/`max_age` is requested, the SDK also requires and validates the returned ID token's `auth_time` claim within clock-skew tolerance. Adaptive authentication decisions and permission enforcement remain server-side responsibilities.
 
 Browser storage defaults to `sessionStorage` through `SessionStorage`. For Node.js or test environments, provide an explicit storage implementation such as `MemoryStorage`.
 
