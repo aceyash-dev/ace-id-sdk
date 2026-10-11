@@ -184,7 +184,7 @@ For HTTPS redirect URIs, Android App Links are preferred when the application ow
 
 ### Build the Android AAR
 
-The Android AAR workflow is manually triggered from the repository's GitHub Actions tab. It runs Android tests, builds the AAR, and uploads it as a workflow artifact. GitHub Release creation is a separate opt-in step and requires the repository workflow token to have release-write permission.
+The Android AAR workflow is manually triggered from the repository's GitHub Actions tab. It runs Android tests, builds the AAR, and uploads it as a workflow artifact. The SDK Release Build workflow validates the npm package, Android AAR, and Swift Package before any release action. npm publication and GitHub Release creation are separate opt-in inputs, both restricted to `main`. npm publication uses npm trusted publishing, so configure the npm package's trusted publisher for this repository and `.github/workflows/release.yml` before enabling it; the workflow does not store a long-lived npm write token. GitHub Release creation requires the workflow token to have release-write permission.
 
 ## Security
 
