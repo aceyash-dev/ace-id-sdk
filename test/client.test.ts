@@ -362,6 +362,20 @@ describe('AID (browser)', () => {
     expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
   });
 
+  it('preserves existing authorization endpoint query parameters', async () => {
+    const assign = mockLocation();
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify(discoveryDoc({
+      authorization_endpoint: `${ISSUER}/auth?tenant=existing&client_id=stale`,
+    })), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const aid = new AID({ issuer: ISSUER, clientId: 'aid-sdk-test', redirectUri: 'https://app.example.test/cb', storage: new MemoryStorage() });
+    await aid.signIn();
+    const authUrl = new URL(String(assign.mock.calls[0]?.[0]));
+    expect(authUrl.searchParams.get('tenant')).toBe('existing');
+    expect(authUrl.searchParams.get('client_id')).toBe('aid-sdk-test');
+    expect(authUrl.searchParams.get('response_type')).toBe('code');
+    expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
+  });
+
   it('rejects attempts to override OAuth security parameters', async () => {
     const aid = new AID({ issuer: ISSUER, clientId: 'aid-sdk-test', redirectUri: 'https://app.example.test/cb', storage: new MemoryStorage() });
     await expect(aid.signIn({ additionalParameters: { STATE: 'bad' } })).rejects.toBeInstanceOf(AIDError);
