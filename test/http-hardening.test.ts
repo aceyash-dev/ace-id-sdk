@@ -37,6 +37,13 @@ describe('SDK request and redirect hardening', () => {
     await expect(fetchDiscovery(ISSUER)).rejects.toThrow(/token_endpoint.*HTTPS/i);
   });
 
+  it('rejects OIDC endpoints that contain URL fragments', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(
+      discoveryDoc({ authorization_endpoint: `${ISSUER}/auth#fragment` }),
+    ), { status: 200, headers: { 'content-type': 'application/json' } })));
+    await expect(fetchDiscovery(ISSUER)).rejects.toThrow(/authorization_endpoint.*fragment/i);
+  });
+
   it('attaches a bounded abort signal to discovery requests', async () => {
     const fetchMock = vi.fn<
       (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
