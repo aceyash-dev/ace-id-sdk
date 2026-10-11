@@ -33,6 +33,14 @@ export async function verifyIdToken(opts: VerifyIdTokenOptions): Promise<JWTPayl
     throw new AIDTokenError('ID token verification failed', err);
   }
 
+  validateVerifiedIdTokenClaims(payload, opts);
+  return payload;
+}
+
+export function validateVerifiedIdTokenClaims(
+  payload: JWTPayload,
+  opts: Pick<VerifyIdTokenOptions, 'issuer' | 'audience' | 'nonce' | 'nonceRequired' | 'clockToleranceSeconds' | 'maxAgeSeconds'>,
+): void {
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
     throw new AIDTokenError('ID token is missing "sub" claim');
   }
@@ -76,5 +84,4 @@ export async function verifyIdToken(opts: VerifyIdTokenOptions): Promise<JWTPayl
       throw new AIDTokenError('ID token nonce mismatch');
     }
   }
-  return payload;
 }
