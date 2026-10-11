@@ -193,17 +193,19 @@ public final class AceIDClient {
         return "session." + digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    static func areSafeAdditionalAuthorizationParameters(_ parameters: [String: String]) -> Bool {
+    nonisolated static func areSafeAdditionalAuthorizationParameters(_ parameters: [String: String]) -> Bool {
         let reserved: Set<String> = [
             "client_id", "redirect_uri", "response_type", "scope", "state", "nonce",
             "code_challenge", "code_challenge_method", "code_verifier", "grant_type",
             "request", "request_uri"
         ]
-        return parameters.allSatisfy { key, value in
-            key.range(of: "^[A-Za-z][A-Za-z0-9_.:-]*$", options: .regularExpression) != nil &&
-            !reserved.contains(key.lowercased()) &&
-            !value.isEmpty &&
-            !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        return parameters.allSatisfy { entry in
+            let key = entry.key
+            let value = entry.value
+            return key.range(of: "^[A-Za-z][A-Za-z0-9_.:-]*$", options: .regularExpression) != nil &&
+                !reserved.contains(key.lowercased()) &&
+                !value.isEmpty &&
+                !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
         }
     }
 
