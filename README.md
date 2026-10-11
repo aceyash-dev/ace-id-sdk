@@ -1,211 +1,53 @@
-# ace-id-sdk
+# Ace ID SDK
 
-**Next planned release: 0.2.3 (release candidate; not published yet)**
+JavaScript/TypeScript, Android, and iOS SDKs for authenticating users with Ace ID through OpenID Connect (OIDC) Authorization Code + PKCE.
 
-Official JavaScript/TypeScript SDK for Ace ID, an OpenID Connect (OIDC) identity provider.
+**Documentation:** [docs.ace-base.cc/projects/ace-id-sdk](https://docs.ace-base.cc/projects/ace-id-sdk)  
+**Source:** [aceyash-dev/ace-id-sdk](https://github.com/aceyash-dev/ace-id-sdk)
 
-## Install
+## Release status
+
+The current release work targets version `0.2.3`. It is a release candidate and is **not published yet**. Do not install this version or distribute platform binaries until the release is tagged and its official artifacts are available.
+
+## JavaScript / TypeScript
+
+Once the version is published:
 
 ```bash
 npm install ace-id-sdk
 ```
 
-## Browser usage
+Basic browser setup:
 
-```typescript
+```ts
 import { AID } from "ace-id-sdk";
 
 const aid = new AID({
   issuer: "https://identity.ace-base.cc",
-  clientId: "my-public-client",
-  redirectUri: "https://example.com/callback",
-  // Optional. Defaults to 10 seconds for network requests.
-  requestTimeoutMs: 10_000,
+  clientId: "your-public-client-id",
+  redirectUri: "https://app.example.com/callback",
 });
 
 await aid.signIn();
 
+// Call on the registered callback route.
 const session = await aid.handleCallback();
 console.log(session.user);
 ```
 
-### Authentication methods
+Use `ace-id-sdk/server` only in trusted server runtimes. The optional React adapter is available from `ace-id-sdk/react`. Never expose a client secret in browser or mobile code.
 
-Available methods include `signIn()`, `handleCallback()`, `getSession()`, `isAuthenticated()`, `getUser()`, `getAccessToken()`, `getValidAccessToken()`, `signOut()`, and `refresh()`.
+## Native SDKs
 
-### Step-up and risk-based authentication
-
-Browser sign-in accepts OIDC hints such as `prompt`, `loginHint`, `maxAge`, `acrValues`, and `uiLocales`, plus safe provider-specific `additionalParameters`. Android exposes matching options through `AidAuthorizationOptions`; iOS already supports additional authorization parameters. Security-critical values such as `client_id`, `redirect_uri`, `state`, `nonce`, PKCE fields, `request`, and `request_uri` cannot be overridden.
-
-These hints are requests to the identity provider, not proof of identity or a client-side risk score. When `maxAge`/`max_age` is requested, the SDK also requires and validates the returned ID token's `auth_time` claim within clock-skew tolerance. Adaptive authentication decisions and permission enforcement remain server-side responsibilities.
-
-Browser storage defaults to `sessionStorage` through `SessionStorage`. For Node.js or test environments, provide an explicit storage implementation such as `MemoryStorage`.
-
-`requestTimeoutMs` sets the timeout for discovery, token exchange/refresh/revocation, and UserInfo requests. It must be a positive finite number. The default is 10 seconds. The SDK validates OIDC endpoint URLs and does not accept insecure HTTP endpoints except localhost during local development.
-
-Logout `redirectTo` URLs must be absolute HTTPS URLs (HTTP localhost is allowed for development) and share the origin of the configured `redirectUri`. Configure the identity provider's allowed post-logout redirect URIs to match.
-
-## AIDC project configuration
-
-Projects created with AIDC can store their Ace ID configuration in `.aid.json`:
-
-```json
-{
-  "issuer": "https://identity.ace-base.cc",
-  "app_id": "your-app-id",
-  "client_id": "your-client-id",
-  "redirect_uri": "https://example.com/callback",
-  "scopes": ["openid", "profile", "email", "offline_access"],
-  "project_type": "web",
-  "framework": "Vite",
-  "sdk": "ace-id-sdk"
-}
-```
-
-Use `createAIDFromProjectConfig()` to convert the configuration into an `AID` instance:
-
-```typescript
-import { createAIDFromProjectConfig } from "ace-id-sdk";
-
-const aid = createAIDFromProjectConfig(projectConfig);
-```
-
-| AIDC configuration | AID configuration |
-| --- | --- |
-| `issuer` | `AIDConfig.issuer` |
-| `client_id` | `AIDConfig.clientId` |
-| `redirect_uri` | `AIDConfig.redirectUri` |
-| `scopes` | `AIDConfig.scope` |
-
-`app_id` is AIDC project metadata and is not passed to the constructor. The SDK does not read `.aid.json` directly from the filesystem; AIDC owns project configuration and tooling, while the SDK consumes the configuration supplied by the application.
-
-## Server
-
-```typescript
-import { AIDServer } from "ace-id-sdk/server";
-
-const aid = new AIDServer({
-  issuer: "https://identity.ace-base.cc",
-  clientId: process.env.ACE_ID_CLIENT_ID!,
-  clientSecret: process.env.ACE_ID_CLIENT_SECRET!,
-  requestTimeoutMs: 10_000,
-});
-
-const tokens = await aid.exchangeCode(code, redirectUri);
-const user = await aid.userInfo(tokens.accessToken);
-```
-
-The server entry point is intended for server-side environments only. Do not import `ace-id-sdk/server` into browser bundles, and never expose client secrets in browser applications.
-
-## Vanilla JavaScript
-
-The SDK can be loaded directly in a browser without npm or a bundler:
-
-```html
-<script src="https://unpkg.com/ace-id-sdk@0.2.3/dist/ace-id-sdk.global.js"></script>
-<script>
-  const auth = new AceID.AID({
-    issuer: "https://identity.ace-base.cc",
-    clientId: "your-client-id",
-    redirectUri: "https://your-app.example.com/callback"
-  });
-</script>
-```
-
-The browser bundle exposes the SDK through the global `AceID` object. Available exports include `AID`, storage adapters, PKCE helpers, and SDK error classes.
-
-## React integration
-
-Install React 18 or newer in your application, then import the optional adapter from `ace-id-sdk/react`:
-
-```tsx
-import { AID } from 'ace-id-sdk';
-import { AuthProvider, useAuth, ProtectedRoute } from 'ace-id-sdk/react';
-
-const client = new AID({ issuer: 'https://identity.ace-base.cc', clientId: 'your-client-id', redirectUri: 'https://app.example.com/callback' });
-
-function Account() {
-  const { session, status, signIn } = useAuth();
-  if (status === 'loading') return <p>Loading session…</p>;
-  if (status === 'error') return <p role="alert">Sign-in failed. Please try again.</p>;
-  if (status !== 'authenticated') return <button onClick={() => void signIn()}>Sign in</button>;
-  return <p>Signed in as {session?.user.email}</p>;
-}
-
-export function App() {
-  return <AuthProvider client={client}><ProtectedRoute fallback={<p>Please sign in.</p>}><Account /></ProtectedRoute></AuthProvider>;
-}
-```
-
-The React adapter is optional and does not add React to the core SDK runtime. For SSR and cookie-session security guidance, see [framework and SSR guide](https://docs.ace-base.cc/projects/ace-id-sdk-framework-adapters). The test issuer helper is exported from `ace-id-sdk/testing`; redacted runtime diagnostics are exported from `ace-id-sdk/diagnostics`.
-
-## iOS (Swift Package)
-
-A native Swift Package is available under `Package.swift`. It uses AppAuth-iOS for OIDC discovery and Authorization Code + PKCE, with Keychain-backed session storage. See [the iOS SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-ios). AppAuth's authorization state is persisted securely. `validAccessToken` delegates refresh to AppAuth and persists rotated token state; refresh errors fail closed instead of fabricating a session from raw token strings.
-
-## Android
-
-The repository also contains a native Kotlin Android SDK:
-
-- **Namespace:** `tab.aid.sdk`
-- **Minimum Android version:** API 23
-- **Compile SDK:** API 36
-- **Authentication:** Authorization Code + PKCE (S256)
-- **Distribution:** Android Archive (AAR)
-- **Core dependency:** Kotlin Coroutines
-
-The Android SDK is authentication/account focused. It does not create clients, applications, programs, or provisioning resources.
-
-### Basic Kotlin
-
-```kotlin
-val ace = AceID(
-    issuer = "https://id.example.com",
-    clientId = BuildConfig.ACE_CLIENT_ID,
-    redirectUri = "com.example.app:/oauth/callback"
-)
-
-lifecycleScope.launch {
-    val session = ace.login(this@MainActivity)
-    println(session.user.email)
-}
-```
-
-### Account and access token
-
-```kotlin
-lifecycleScope.launch {
-    val account = ace.getAccount(this@MainActivity)
-    val token = ace.getValidAccessTokenAsync(this@MainActivity)
-}
-```
-
-For HTTPS redirect URIs, Android App Links are preferred when the application owns the domain. They require a verified website association through Digital Asset Links. See [the Android SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-android).
-
-### Build the Android AAR
-
-The Android AAR workflow is manually triggered from the repository's GitHub Actions tab. It runs Android tests, builds the AAR, and uploads it as a workflow artifact. The SDK Release Build workflow validates the npm package, Android AAR, and Swift Package before any release action. npm publication and GitHub Release creation are separate opt-in inputs, both restricted to `main`. npm publication uses npm trusted publishing, so configure the npm package's trusted publisher for this repository and `.github/workflows/release.yml` before enabling it; the workflow does not store a long-lived npm write token. GitHub Release creation requires the workflow token to have release-write permission.
+- [Android SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-android)
+- [iOS SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-ios)
+- [React, Next.js, and SSR guide](https://docs.ace-base.cc/projects/ace-id-sdk-framework-adapters)
 
 ## Security
 
-- Authorization Code flow with PKCE using S256; no plain PKCE fallback.
-- State validation during authorization callback.
-- ID-token verification against provider JWKS.
-- ID-token validation of issuer, audience, expiration, subject, and nonce where applicable.
-- OIDC discovery issuer and endpoint validation.
-- Bounded network requests with configurable timeouts.
-- Logout redirect validation to reduce open-redirect risks.
-- Never expose client secrets in browser applications.
-- Never import `ace-id-sdk/server` into browser bundles.
+The SDK uses Authorization Code with PKCE S256 and validates the authorization transaction. Step-up parameters are requests to the identity provider, not proof of MFA or a risk decision. Enforce permissions and sensitive actions on the server.
 
-## Package exports
-
-```typescript
-import { AID } from "ace-id-sdk";
-import { AIDServer } from "ace-id-sdk/server";
-```
-
-The vanilla browser build is available at `dist/ace-id-sdk.global.js`.
+For installation, API details, AIDC configuration, token refresh, logout, troubleshooting, and release status, use the [full SDK documentation](https://docs.ace-base.cc/projects/ace-id-sdk).
 
 ## License
 
