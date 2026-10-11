@@ -90,10 +90,10 @@ jobs:
           tar -tzf release/ace-id-sdk-0.2.3.tgz > release/npm-tarball-files.txt
           grep -q '^package/dist/index.js$' release/npm-tarball-files.txt
           grep -q '^package/dist/index.cjs$' release/npm-tarball-files.txt
-          mkdir -p release/unpacked
-          tar -xzf release/ace-id-sdk-0.2.3.tgz -C release/unpacked package/README.md package/LICENSE
-          test -f release/unpacked/package/README.md
-          test -f release/unpacked/package/LICENSE
+          mkdir -p /tmp/npm-package-check
+          tar -xzf release/ace-id-sdk-0.2.3.tgz -C /tmp/npm-package-check package/README.md package/LICENSE
+          test -f /tmp/npm-package-check/package/README.md
+          test -f /tmp/npm-package-check/package/LICENSE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-node
