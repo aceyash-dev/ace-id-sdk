@@ -87,6 +87,38 @@ class AceIDTest {
     }
 
     @Test
+    fun idTokenTimeClaimsRequireNumericExpiryAndRejectExpiredOrFutureNotBefore() {
+        val now = 1_000_000L
+        AidJwtVerifier.validateTimeClaims(
+            org.json.JSONObject("""{"exp":1000100,"nbf":999999}"""), now,
+        )
+        assertTrue(runCatching {
+            AidJwtVerifier.validateTimeClaims(org.json.JSONObject("""{"exp":"1000100"}"""), now)
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
+            AidJwtVerifier.validateTimeClaims(org.json.JSONObject("""{"exp":999000}"""), now)
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
+            AidJwtVerifier.validateTimeClaims(
+                org.json.JSONObject("""{"exp":1000100,"nbf":1000100}"""), now,
+            )
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
+            AidJwtVerifier.validateTimeClaims(
+                org.json.JSONObject("""{"exp":1000100,"nbf":"999999"}"""), now,
+            )
+        }.exceptionOrNull() is AidException)
+    }
+
+    @Test
+    fun oversizedIdTokenIsRejectedBeforeParsing() {
+        assertTrue(runCatching {
+            AidJwtVerifier.validateTokenSize("a".repeat(AidJwtVerifier.MAX_ID_TOKEN_BYTES + 1))
+        }.exceptionOrNull() is AidException)
+        AidJwtVerifier.validateTokenSize("a".repeat(AidJwtVerifier.MAX_ID_TOKEN_BYTES))
+    }
+
+    @Test
     fun configurationIsExposed() {
         val aid = AceID(
             issuer = "https://issuer.example.com",
