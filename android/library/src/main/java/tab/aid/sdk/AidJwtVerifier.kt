@@ -158,7 +158,7 @@ internal object AidJwtVerifier {
             ?: throw AidException("ID token is missing auth_time required by max_age")
         val authTimeSeconds = authTime.toDouble()
         if (!authTimeSeconds.isFinite() || authTimeSeconds > nowSeconds + CLOCK_SKEW_SECONDS ||
-            nowSeconds - authTimeSeconds > maxAgeSeconds + CLOCK_SKEW_SECONDS) {
+            nowSeconds - authTimeSeconds > maxAgeSeconds.toDouble() + CLOCK_SKEW_SECONDS) {
             throw AidException("ID token authentication time exceeds the requested max_age")
         }
     }
