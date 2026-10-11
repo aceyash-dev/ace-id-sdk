@@ -73,6 +73,17 @@ class AceIDTest {
                 org.json.JSONObject("""{"iat":999990,"aud":["client","other"]}"""), "client", now,
             )
         }.exceptionOrNull() is AidException)
+        AidJwtVerifier.validateAuthenticationTime(
+            org.json.JSONObject("""{"auth_time":999990}"""), 60L, now,
+        )
+        assertTrue(runCatching {
+            AidJwtVerifier.validateAuthenticationTime(org.json.JSONObject("{}"), 60L, now)
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
+            AidJwtVerifier.validateAuthenticationTime(
+                org.json.JSONObject("""{"auth_time":999000}"""), 30L, now,
+            )
+        }.exceptionOrNull() is AidException)
     }
 
     @Test
