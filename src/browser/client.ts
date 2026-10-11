@@ -125,7 +125,9 @@ export class AID {
     const codeChallenge = await createCodeChallenge(codeVerifier);
     const transaction: AuthTransaction = {
       state, nonce, codeVerifier, redirectUri: this.config.redirectUri,
-      createdAt: Date.now(), returnTo: options.returnTo,
+      createdAt: Date.now(),
+      ...(options.maxAge !== undefined ? { maxAgeSeconds: options.maxAge } : {}),
+      returnTo: options.returnTo,
     };
 
     try {
@@ -193,6 +195,7 @@ export class AID {
       const claims = await verifyIdToken({
         idToken: tokens.idToken, jwksUri: discovery.jwks_uri,
         issuer: discovery.issuer, audience: this.config.clientId, nonce: transaction.nonce,
+        maxAgeSeconds: transaction.maxAgeSeconds,
       });
       const session: AIDSession = {
         user: userFromClaims(claims as Record<string, unknown>),
@@ -356,7 +359,9 @@ export class AID {
           typeof transaction.nonce !== 'string' || !transaction.nonce ||
           typeof transaction.codeVerifier !== 'string' || !transaction.codeVerifier ||
           typeof transaction.redirectUri !== 'string' || !transaction.redirectUri ||
-          typeof transaction.createdAt !== 'number' || !Number.isFinite(transaction.createdAt)) {
+          typeof transaction.createdAt !== 'number' || !Number.isFinite(transaction.createdAt) ||
+          (transaction.maxAgeSeconds !== undefined &&
+            (typeof transaction.maxAgeSeconds !== 'number' || !Number.isSafeInteger(transaction.maxAgeSeconds) || transaction.maxAgeSeconds < 0))) {
         this.clearTransaction(); return null;
       }
       return transaction as unknown as AuthTransaction;
