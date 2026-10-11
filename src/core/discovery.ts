@@ -136,4 +136,9 @@ function validateEndpoint(
   if (parsed.username || parsed.password) {
     throw new AIDDiscoveryError(`OIDC discovery "${name}" must not contain user information`);
   }
+  // OAuth/OIDC endpoint URIs must not contain fragments. A fragment also causes
+  // browser query parameters to be interpreted client-side instead of sent to the OP.
+  if (endpoint.includes('#') || parsed.hash) {
+    throw new AIDDiscoveryError(`OIDC discovery "${name}" must not contain a fragment`);
+  }
 }

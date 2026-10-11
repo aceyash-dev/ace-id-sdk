@@ -16,6 +16,17 @@ export interface AIDConfig {
   requestTimeoutMs?: number;
 }
 
+/** Optional OIDC hints for step-up and risk-based authorization. */
+export interface AIDAuthorizationOptions {
+  prompt?: string | string[];
+  loginHint?: string;
+  /** Maximum authentication age in seconds; zero requests fresh authentication. */
+  maxAge?: number;
+  acrValues?: string[];
+  uiLocales?: string[];
+  additionalParameters?: Record<string, string>;
+}
+
 export interface AIDServerConfig {
   issuer: string;
   clientId: string;
@@ -64,6 +75,8 @@ export interface AuthTransaction {
   codeVerifier: string;
   redirectUri: string;
   createdAt: number;
+  /** Requested maximum authentication age, enforced against the verified ID token's auth_time. */
+  maxAgeSeconds?: number;
   /** Opaque app-supplied value; the SDK does not navigate to it automatically. */
   returnTo?: string;
 }

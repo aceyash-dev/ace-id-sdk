@@ -8,6 +8,7 @@ enum AceIDIDTokenVerifier {
         issuer: URL,
         clientID: String,
         expectedNonce: String?,
+        maxAgeSeconds: Int? = nil,
         session: URLSession = .shared,
         completion: @escaping (Result<[String: String], Error>) -> Void
     ) {
@@ -35,7 +36,8 @@ enum AceIDIDTokenVerifier {
             claims,
             issuer: issuer,
             clientID: clientID,
-            expectedNonce: expectedNonce
+            expectedNonce: expectedNonce,
+            maxAgeSeconds: maxAgeSeconds
         ) else {
             completion(.failure(AceIDError.invalidIDToken("ID token claims did not match the expected issuer, audience, time, or nonce.")))
             return
@@ -120,7 +122,8 @@ enum AceIDIDTokenVerifier {
         _ claims: [String: Any],
         issuer: URL,
         clientID: String,
-        expectedNonce: String?
+        expectedNonce: String?,
+        maxAgeSeconds: Int?
     ) -> Bool {
         guard let tokenIssuer = claims["iss"] as? String,
               let subject = claims["sub"] as? String, !subject.isEmpty,
@@ -146,7 +149,22 @@ enum AceIDIDTokenVerifier {
         if let notBefore = (claims["nbf"] as? NSNumber)?.doubleValue,
            notBefore > Date().timeIntervalSince1970 + 60 { return false }
         if let expectedNonce, (claims["nonce"] as? String) != expectedNonce { return false }
+        if let maxAgeSeconds {
+            let authTime = (claims["auth_time"] as? NSNumber)?.doubleValue
+            if !isAuthenticationTimeValid(authTime: authTime, maxAgeSeconds: maxAgeSeconds) { return false }
+        }
         return true
+    }
+
+    static func isAuthenticationTimeValid(
+        authTime: Double?,
+        maxAgeSeconds: Int,
+        now: TimeInterval = Date().timeIntervalSince1970,
+        tolerance: TimeInterval = 60
+    ) -> Bool {
+        guard let authTime, authTime.isFinite, maxAgeSeconds >= 0,
+              now.isFinite, tolerance.isFinite, tolerance >= 0 else { return false }
+        return authTime <= now + tolerance && now - authTime <= Double(maxAgeSeconds) + tolerance
     }
 
     private static func verify(

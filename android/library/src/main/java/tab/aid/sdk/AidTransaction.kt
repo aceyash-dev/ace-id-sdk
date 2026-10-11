@@ -8,6 +8,7 @@ internal data class AidTransaction(
     val codeVerifier: String,
     val redirectUri: String,
     val createdAt: Long,
+    val maxAgeSeconds: Long? = null,
 ) {
     fun hasValidTimestamp(
         nowMillis: Long = System.currentTimeMillis(),
@@ -26,6 +27,7 @@ internal data class AidTransaction(
         .put("code_verifier", codeVerifier)
         .put("redirect_uri", redirectUri)
         .put("created_at", createdAt)
+        .also { if (maxAgeSeconds != null) it.put("max_age_seconds", maxAgeSeconds) }
         .toString()
 
     companion object {
@@ -37,6 +39,7 @@ internal data class AidTransaction(
                 codeVerifier = value.getString("code_verifier"),
                 redirectUri = value.getString("redirect_uri"),
                 createdAt = value.getLong("created_at"),
+                maxAgeSeconds = if (value.has("max_age_seconds") && !value.isNull("max_age_seconds")) value.getLong("max_age_seconds") else null,
             )
         }
     }

@@ -27,6 +27,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_npm:
+        description: "Publish ace-id-sdk to npm after all platform checks pass (main only; requires npm trusted publishing)"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -44,13 +49,14 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version || '0.2.3' }}
           PUBLISH_RELEASE: ${{ inputs.publish_release || false }}
+          PUBLISH_NPM: ${{ inputs.publish_npm || false }}
         run: |
           set -euo pipefail
           test "$RELEASE_VERSION" = "0.2.3" || {
             echo "This release workflow is scoped to 0.2.3; received: $RELEASE_VERSION" >&2
             exit 1
           }
-          if [ "$PUBLISH_RELEASE" = "true" ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+          if { [ "$PUBLISH_RELEASE" = "true" ] || [ "$PUBLISH_NPM" = "true" ]; } && [ "$GITHUB_REF" != "refs/heads/main" ]; then
             echo "Publishing is allowed only from main after the release PR is merged." >&2
             exit 1
           fi
@@ -84,7 +90,10 @@ jobs:
           tar -tzf release/ace-id-sdk-0.2.3.tgz > release/npm-tarball-files.txt
           grep -q '^package/dist/index.js$' release/npm-tarball-files.txt
           grep -q '^package/dist/index.cjs$' release/npm-tarball-files.txt
-          grep -q '^package/README.md$' release/npm-tarball-files.txt
+          mkdir -p /tmp/npm-package-check
+          tar -xzf release/ace-id-sdk-0.2.3.tgz -C /tmp/npm-package-check package/README.md package/LICENSE
+          test -f /tmp/npm-package-check/package/README.md
+          test -f /tmp/npm-package-check/package/LICENSE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-node
@@ -175,6 +184,33 @@ jobs:
           path: release/*
           if-no-files-found: error
           retention-days: 30
+
+  publish-npm:
+    name: Publish npm package
+    needs: [guard, node-package, android-aar, swift-package]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm == true && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Setup Node with npm trusted publishing
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Verify package identity and install dependencies
+        run: |
+          set -euo pipefail
+          node -e "const p=require('./package.json'); if (p.name !== 'ace-id-sdk' || p.version !== '0.2.3' || p.repository.url !== 'https://github.com/aceyash-dev/ace-id-sdk.git') throw new Error('Unexpected npm package identity, version, or repository')"
+          npm ci
+      - name: Publish public npm package
+        run: npm publish --access public
 
   publish-github-release:
     name: Publish validated GitHub Release

@@ -193,6 +193,22 @@ public final class AceIDClient {
         return "session." + digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    nonisolated static func areSafeAdditionalAuthorizationParameters(_ parameters: [String: String]) -> Bool {
+        let reserved: Set<String> = [
+            "client_id", "redirect_uri", "response_type", "scope", "state", "nonce",
+            "code_challenge", "code_challenge_method", "code_verifier", "grant_type",
+            "request", "request_uri"
+        ]
+        return parameters.allSatisfy { entry in
+            let key = entry.key
+            let value = entry.value
+            return key.range(of: "^[A-Za-z][A-Za-z0-9_.:-]*$", options: .regularExpression) != nil &&
+                !reserved.contains(key.lowercased()) &&
+                !value.isEmpty &&
+                !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        }
+    }
+
     #if canImport(UIKit)
     public func signIn(
         presenting viewController: UIViewController,
@@ -200,11 +216,19 @@ public final class AceIDClient {
         prefersEphemeralSession: Bool = false,
         completion: @escaping (Result<AceIDSession, Error>) -> Void
     ) {
-        guard !additionalParameters.keys.contains(where: {
-            ["client_id", "redirect_uri", "response_type", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "code_verifier"].contains($0.lowercased())
-        }) else {
+        guard Self.areSafeAdditionalAuthorizationParameters(additionalParameters) else {
             completion(.failure(AceIDError.invalidConfiguration("Additional authorization parameters cannot override OAuth security parameters.")))
             return
+        }
+        let requestedMaxAge: Int?
+        if let parameter = additionalParameters.first(where: { $0.key.lowercased() == "max_age" }) {
+            guard parameter.key == "max_age", let parsed = Int(parameter.value), parsed >= 0 else {
+                completion(.failure(AceIDError.invalidConfiguration("max_age must be a non-negative integer in seconds.")))
+                return
+            }
+            requestedMaxAge = parsed
+        } else {
+            requestedMaxAge = nil
         }
         let generation = UUID()
         authorizationGeneration = generation
@@ -261,7 +285,8 @@ public final class AceIDClient {
                             token: idToken,
                             issuer: self.configuration.issuer,
                             clientID: self.configuration.clientID,
-                            expectedNonce: expectedNonce
+                            expectedNonce: expectedNonce,
+                            maxAgeSeconds: requestedMaxAge
                         ) { validation in
                             DispatchQueue.main.async {
                                 guard self.authorizationGeneration == generation else {

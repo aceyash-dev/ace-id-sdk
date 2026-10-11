@@ -3,6 +3,22 @@ import XCTest
 @testable import AceID
 
 final class IDTokenVerifierTests: XCTestCase {
+    func testMaxAgeRequiresRecentAuthenticationTime() {
+        let now: TimeInterval = 1_000_000
+        XCTAssertTrue(AceIDIDTokenVerifier.isAuthenticationTimeValid(
+            authTime: now - 30, maxAgeSeconds: 60, now: now
+        ))
+        XCTAssertFalse(AceIDIDTokenVerifier.isAuthenticationTimeValid(
+            authTime: nil, maxAgeSeconds: 60, now: now
+        ))
+        XCTAssertFalse(AceIDIDTokenVerifier.isAuthenticationTimeValid(
+            authTime: now - 600, maxAgeSeconds: 30, now: now
+        ))
+        XCTAssertFalse(AceIDIDTokenVerifier.isAuthenticationTimeValid(
+            authTime: now + 120, maxAgeSeconds: 30, now: now
+        ))
+    }
+
     func testRejectsMalformedTokenWithoutNetworkRequest() {
         let finished = expectation(description: "malformed token rejected")
         AceIDIDTokenVerifier.validate(

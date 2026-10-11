@@ -11,6 +11,7 @@ export {
 export type { AIDErrorCode } from './core/errors.js';
 export type {
   AIDConfig,
+  AIDAuthorizationOptions,
   AIDSession,
   AIDStorage,
   AIDTokens,

@@ -67,5 +67,25 @@
     "react": {
       "optional": true
     }
-  }
+  },
+  "author": "aceyash-dev",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aceyash-dev/ace-id-sdk.git"
+  },
+  "homepage": "https://github.com/aceyash-dev/ace-id-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/aceyash-dev/ace-id-sdk/issues"
+  },
+  "keywords": [
+    "ace-id",
+    "openid-connect",
+    "oidc",
+    "oauth2",
+    "authentication",
+    "identity",
+    "pkce",
+    "typescript"
+  ]
 }
