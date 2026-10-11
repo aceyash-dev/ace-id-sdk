@@ -17,6 +17,7 @@ internal object AidJwtVerifier {
         configuration: OidcConfiguration,
         clientId: String,
         nonce: String? = null,
+        maxAgeSeconds: Long? = null,
     ): AidUser {
         val parts = jwt.split('.')
         if (parts.size != 3) throw AidException("ID token is not a valid JWT")
@@ -46,6 +47,7 @@ internal object AidJwtVerifier {
             throw AidException("ID token audience does not contain this client")
         }
         validateIssuedAtAndAuthorizedParty(claims, clientId)
+        if (maxAgeSeconds != null) validateAuthenticationTime(claims, maxAgeSeconds)
 
         val now = System.currentTimeMillis() / 1000L
         val expiresAt = claims.optLong("exp", Long.MIN_VALUE)
@@ -144,6 +146,21 @@ internal object AidJwtVerifier {
         "RS384" -> "SHA384withRSA"
         "RS512" -> "SHA512withRSA"
         else -> throw AidException("Unsupported ID token signing algorithm: " + algorithm)
+    }
+
+    internal fun validateAuthenticationTime(
+        claims: JSONObject,
+        maxAgeSeconds: Long,
+        nowSeconds: Long = System.currentTimeMillis() / 1000L,
+    ) {
+        if (maxAgeSeconds < 0L) throw AidException("Requested max_age must be non-negative")
+        val authTime = claims.opt("auth_time") as? Number
+            ?: throw AidException("ID token is missing auth_time required by max_age")
+        val authTimeSeconds = authTime.toDouble()
+        if (!authTimeSeconds.isFinite() || authTimeSeconds > nowSeconds + CLOCK_SKEW_SECONDS ||
+            nowSeconds - authTimeSeconds > maxAgeSeconds + CLOCK_SKEW_SECONDS) {
+            throw AidException("ID token authentication time exceeds the requested max_age")
+        }
     }
 
     internal fun validateIssuedAtAndAuthorizedParty(
