@@ -1,11 +1,11 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { exportJWK, generateKeyPair, SignJWT, type JWTPayload } from 'jose';
 import { verifyIdToken } from '../src/core/jwt.js';
 
 const ISSUER = 'https://issuer.example.test';
 const CLIENT_ID = 'ace-sdk-test';
 const JWKS_URI = `${ISSUER}/jwks`;
-let privateKey: CryptoKey;
+let privateKey: Awaited<ReturnType<typeof generateKeyPair>>['privateKey'];
 let publicJwk: Record<string, unknown>;
 
 beforeAll(async () => {
@@ -24,10 +24,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function signToken(claims: Record<string, unknown> = {}, audience: string | string[] = CLIENT_ID) {
+async function signToken(claims: JWTPayload = {}, audience: string | string[] = CLIENT_ID, includeAuthTime = true) {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({
-    auth_time: now - 10,
+    ...(includeAuthTime ? { auth_time: now - 10 } : {}),
     ...claims,
   })
     .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
@@ -49,11 +49,11 @@ function mockJwks(): void {
 describe('ID token claim hardening', () => {
   it('accepts a recent authentication when max_age is requested', async () => {
     mockJwks();
-    const token = await signToken();
+    const token = await signToken({ nonce: 'expected' });
     await expect(verifyIdToken({
       idToken: token, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
       nonce: 'expected', maxAgeSeconds: 60,
-    })).rejects.toThrow(/nonce mismatch/i);
+    })).resolves.toMatchObject({ sub: 'user-123' });
   });
 
   it('enforces auth_time for max_age and rejects stale authentication', async () => {
@@ -68,7 +68,7 @@ describe('ID token claim hardening', () => {
 
   it('requires auth_time when max_age was requested', async () => {
     mockJwks();
-    const token = await signToken({ auth_time: undefined, nonce: 'expected' });
+    const token = await signToken({ nonce: 'expected' }, CLIENT_ID, false);
     await expect(verifyIdToken({
       idToken: token, jwksUri: JWKS_URI, issuer: ISSUER, audience: CLIENT_ID,
       nonce: 'expected', maxAgeSeconds: 0,
