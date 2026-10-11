@@ -4,6 +4,7 @@ import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 
 class AceIDTest {
 
@@ -45,6 +46,34 @@ class AceIDTest {
     @Test(expected = AidConfigurationException::class)
     fun authorizationOptionsRejectNegativeMaxAge() {
         AidAuthorizationOptions(maxAgeSeconds = -1)
+    }
+
+    @Test
+    fun idTokenValidationRequiresIssuedAtAndChecksAuthorizedParty() {
+        val now = 1_000_000L
+        AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
+            org.json.JSONObject("""{"iat":999990,"aud":"client"}"""), "client", now,
+        )
+        assertThrows<AidException> {
+            AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
+                org.json.JSONObject("""{"aud":"client"}"""), "client", now,
+            )
+        }
+        assertThrows<AidException> {
+            AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
+                org.json.JSONObject("""{"iat":1001000,"aud":"client"}"""), "client", now,
+            )
+        }
+        assertThrows<AidException> {
+            AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
+                org.json.JSONObject("""{"iat":999990,"aud":"client","azp":"other"}"""), "client", now,
+            )
+        }
+        assertThrows<AidException> {
+            AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
+                org.json.JSONObject("""{"iat":999990,"aud":["client","other"]}"""), "client", now,
+            )
+        }
     }
 
     @Test
