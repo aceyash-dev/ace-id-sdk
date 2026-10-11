@@ -88,6 +88,17 @@ final class AceIDConfigurationTests: XCTestCase {
         ))
     }
 
+
+    func testRejectsReservedAndMalformedAuthorizationParameters() {
+        XCTAssertFalse(AceIDClient.areSafeAdditionalAuthorizationParameters(["STATE": "attacker"]))
+        XCTAssertFalse(AceIDClient.areSafeAdditionalAuthorizationParameters(["request_uri": "https://attacker.example/request"]))
+        XCTAssertFalse(AceIDClient.areSafeAdditionalAuthorizationParameters(["bad key": "value"]))
+        XCTAssertFalse(AceIDClient.areSafeAdditionalAuthorizationParameters(["organization": "bad\nvalue"]))
+        XCTAssertFalse(AceIDClient.areSafeAdditionalAuthorizationParameters(["organization": ""]))
+        XCTAssertTrue(AceIDClient.areSafeAdditionalAuthorizationParameters(["organization": "acme"]))
+        XCTAssertTrue(AceIDClient.areSafeAdditionalAuthorizationParameters(["prompt": "login"]))
+    }
+
     func testEmptyClientIDFails() {
         XCTAssertThrowsError(try AceIDConfiguration(
             issuer: URL(string: "https://identity.example.com")!,
