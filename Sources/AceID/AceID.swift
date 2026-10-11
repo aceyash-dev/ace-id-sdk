@@ -193,6 +193,20 @@ public final class AceIDClient {
         return "session." + digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    static func areSafeAdditionalAuthorizationParameters(_ parameters: [String: String]) -> Bool {
+        let reserved: Set<String> = [
+            "client_id", "redirect_uri", "response_type", "scope", "state", "nonce",
+            "code_challenge", "code_challenge_method", "code_verifier", "grant_type",
+            "request", "request_uri"
+        ]
+        return parameters.allSatisfy { key, value in
+            key.range(of: "^[A-Za-z][A-Za-z0-9_.:-]*$", options: .regularExpression) != nil &&
+            !reserved.contains(key.lowercased()) &&
+            !value.isEmpty &&
+            !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        }
+    }
+
     #if canImport(UIKit)
     public func signIn(
         presenting viewController: UIViewController,
@@ -200,9 +214,7 @@ public final class AceIDClient {
         prefersEphemeralSession: Bool = false,
         completion: @escaping (Result<AceIDSession, Error>) -> Void
     ) {
-        guard !additionalParameters.keys.contains(where: {
-            ["client_id", "redirect_uri", "response_type", "scope", "state", "nonce", "code_challenge", "code_challenge_method", "code_verifier", "grant_type", "request", "request_uri"].contains($0.lowercased())
-        }) else {
+        guard Self.areSafeAdditionalAuthorizationParameters(additionalParameters) else {
             completion(.failure(AceIDError.invalidConfiguration("Additional authorization parameters cannot override OAuth security parameters.")))
             return
         }
