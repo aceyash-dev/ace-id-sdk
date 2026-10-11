@@ -126,6 +126,7 @@ class AceID @JvmOverloads constructor(
                 codeVerifier = request.codeVerifier,
                 redirectUri = request.redirectUri,
                 createdAt = System.currentTimeMillis(),
+                    maxAgeSeconds = options.maxAgeSeconds,
             ).toJson(),
         )
         CustomTabsIntent.Builder().build().launchUrl(context, Uri.parse(request.url))
@@ -161,6 +162,7 @@ class AceID @JvmOverloads constructor(
                     codeVerifier = request.codeVerifier,
                     redirectUri = request.redirectUri,
                     createdAt = System.currentTimeMillis(),
+                    maxAgeSeconds = options.maxAgeSeconds,
                 ).toJson(),
             )
         }
@@ -268,6 +270,7 @@ class AceID @JvmOverloads constructor(
                 configuration = configuration,
                 clientId = clientId,
                 nonce = transaction.nonce,
+                maxAgeSeconds = transaction.maxAgeSeconds,
             )
 
             val session = AidSession(tokens = tokens, user = user)
