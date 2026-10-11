@@ -75,6 +75,8 @@ export interface AuthTransaction {
   codeVerifier: string;
   redirectUri: string;
   createdAt: number;
+  /** Requested maximum authentication age, enforced against the verified ID token's auth_time. */
+  maxAgeSeconds?: number;
   /** Opaque app-supplied value; the SDK does not navigate to it automatically. */
   returnTo?: string;
 }
