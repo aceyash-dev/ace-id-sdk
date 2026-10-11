@@ -134,13 +134,18 @@ export class AID {
       throw new AIDError('STORAGE_ERROR', 'Failed to persist authorization transaction', err);
     }
 
+    const authorizationUrl = new URL(discovery.authorization_endpoint);
     const params = new URLSearchParams({
       response_type: 'code', client_id: this.config.clientId,
       redirect_uri: this.config.redirectUri, scope: this.config.scope,
       state, nonce, code_challenge: codeChallenge, code_challenge_method: 'S256',
     });
     for (const [key, value] of Object.entries(authorizationOptions)) params.set(key, value);
-    redirectTo(`${discovery.authorization_endpoint}?${params.toString()}`);
+    // Authorization endpoints may already include query parameters. Use URL APIs so
+    // existing parameters are preserved, SDK-owned parameters replace collisions,
+    // and authorization parameters are never accidentally appended after a fragment.
+    for (const [key, value] of params) authorizationUrl.searchParams.set(key, value);
+    redirectTo(authorizationUrl.toString());
   }
 
   async handleCallback(url?: string): Promise<AIDSession> {
