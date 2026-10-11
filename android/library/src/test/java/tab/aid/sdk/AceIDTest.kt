@@ -4,7 +4,6 @@ import org.junit.Test
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertThrows
 
 class AceIDTest {
 
@@ -54,26 +53,26 @@ class AceIDTest {
         AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
             org.json.JSONObject("""{"iat":999990,"aud":"client"}"""), "client", now,
         )
-        assertThrows<AidException> {
+        assertTrue(runCatching {
             AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
                 org.json.JSONObject("""{"aud":"client"}"""), "client", now,
             )
-        }
-        assertThrows<AidException> {
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
             AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
                 org.json.JSONObject("""{"iat":1001000,"aud":"client"}"""), "client", now,
             )
-        }
-        assertThrows<AidException> {
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
             AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
                 org.json.JSONObject("""{"iat":999990,"aud":"client","azp":"other"}"""), "client", now,
             )
-        }
-        assertThrows<AidException> {
+        }.exceptionOrNull() is AidException)
+        assertTrue(runCatching {
             AidJwtVerifier.validateIssuedAtAndAuthorizedParty(
                 org.json.JSONObject("""{"iat":999990,"aud":["client","other"]}"""), "client", now,
             )
-        }
+        }.exceptionOrNull() is AidException)
     }
 
     @Test
