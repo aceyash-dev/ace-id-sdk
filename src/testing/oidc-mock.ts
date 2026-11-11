@@ -16,7 +16,9 @@ export interface MockOIDCIssuer {
   discovery: OIDCDiscoveryDocument;
   fetch: typeof fetch;
   requests: Array<{ url: string; method: string; body?: string }>;
-  setFailures(failures: { tokenExchange?: boolean; refresh?: boolean }): void;
+  setFailures(failures: { tokenExchange?: boolean; refresh?: boolean; userInfo?: boolean }): void;
+  /** Replace the UserInfo payload returned for an authorised request. */
+  setUser(user: Record<string, unknown>): void;
 }
 
 /** Deterministic fetch-compatible issuer for SDK tests. Tokens are test fixtures, never cryptographically valid ID tokens. */
@@ -25,6 +27,8 @@ export function createMockOIDCIssuer(options: MockOIDCOptions = {}): MockOIDCIss
   const requests: MockOIDCIssuer['requests'] = [];
   let tokenExchangeFailure = options.failTokenExchange ?? false;
   let refreshFailure = options.failRefresh ?? false;
+  let userInfoFailure = false;
+  let user = options.user ?? { sub: 'mock-user', email: 'mock@example.test' };
   let refreshGeneration = 0;
   const now = options.clock ?? Date.now;
   const discovery: OIDCDiscoveryDocument = {
@@ -94,7 +98,8 @@ export function createMockOIDCIssuer(options: MockOIDCOptions = {}): MockOIDCIss
     if (url === issuer + '/userinfo') {
       const auth = headers.get('authorization');
       if (!auth?.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
-      return json(options.user ?? { sub: 'mock-user', email: 'mock@example.test' });
+      if (userInfoFailure) return json({ error: 'temporarily_unavailable' }, 503);
+      return json(user);
     }
     if (url === issuer + '/revoke' && method === 'POST') return new Response(null, { status: 200 });
     if (url === issuer + '/logout') return new Response(null, { status: 204 });
@@ -110,6 +115,10 @@ export function createMockOIDCIssuer(options: MockOIDCOptions = {}): MockOIDCIss
     setFailures: (failures) => {
       if (failures.tokenExchange !== undefined) tokenExchangeFailure = failures.tokenExchange;
       if (failures.refresh !== undefined) refreshFailure = failures.refresh;
+      if (failures.userInfo !== undefined) userInfoFailure = failures.userInfo;
+    },
+    setUser: (next) => {
+      user = next;
     },
   };
 }

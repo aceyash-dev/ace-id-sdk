@@ -1,3 +1,5 @@
+import type { AIDLogSink } from './logging.js';
+
 export interface AIDStorage {
   get(key: string): string | null;
   set(key: string, value: string): void;
@@ -14,6 +16,33 @@ export interface AIDConfig {
   transactionTtlMs?: number;
   /** Network request timeout in milliseconds. Defaults to 10 seconds. */
   requestTimeoutMs?: number;
+  /**
+   * How long a fetched discovery document is reused. Defaults to 5 minutes;
+   * `0` disables caching and refetches on every flow.
+   */
+  discoveryCacheTtlMs?: number;
+  /**
+   * Refresh the access token shortly before it expires and emit the resulting
+   * session state. Defaults to `false`; `getValidAccessToken()` refreshes on
+   * demand regardless.
+   */
+  autoRefresh?: boolean;
+  /** Seconds before expiry at which a token counts as expiring. Defaults to 60. */
+  leewaySeconds?: number;
+  /** Clock skew tolerated when verifying ID token times, in seconds. Defaults to 60. */
+  clockSkewSeconds?: number;
+  /** Additional attempts for retry-safe requests. Defaults to 2; `0` disables. */
+  maxRetries?: number;
+  /** Emit debug-level log entries. Defaults to false. */
+  debug?: boolean;
+  /** Receives redacted log entries. Without one, the SDK logs nothing. */
+  logger?: AIDLogSink;
+  /** Extra origins a `returnTo` target may use, e.g. `['https://app.example.com']`. */
+  additionalRedirectOrigins?: string[];
+  /** Narrow the accepted ID token signing algorithms (asymmetric only). */
+  allowedSigningAlgorithms?: string[];
+  /** Prefix for storage keys. Defaults to `aid`, giving keys such as `aid:session`. */
+  storageKeyPrefix?: string;
   /**
    * Minimum interval between token refreshes that happen only because the token
    * endpoint omitted `expires_in`. Defaults to 60 seconds.
@@ -43,6 +72,12 @@ export interface AIDServerConfig {
   scope?: string;
   /** Network request timeout in milliseconds. Defaults to 10 seconds. */
   requestTimeoutMs?: number;
+  /** Additional attempts for retry-safe requests. Defaults to 2; `0` disables. */
+  maxRetries?: number;
+  /** Emit debug-level log entries. Defaults to false. */
+  debug?: boolean;
+  /** Receives redacted log entries. Without one, the SDK logs nothing. */
+  logger?: AIDLogSink;
 }
 
 export interface AIDUser {

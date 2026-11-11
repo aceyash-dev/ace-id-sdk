@@ -1,15 +1,23 @@
 import { normalizeTokens, userFromClaims } from '../core/claims.js';
 import {
-  fetchDiscovery,
+  summarizeAIDChecks,
+  validateAIDConfig,
+  type AIDConfigCheck,
+  type AIDConfigReport,
+} from '../core/config.js';
+import {
+  DEFAULT_DISCOVERY_CACHE_TTL_MS,
+  DiscoveryCache,
   normalizeIssuer,
   type OIDCDiscoveryDocument,
 } from '../core/discovery.js';
 import {
+  AIDAuthenticationError,
   AIDCallbackError,
   AIDDiscoveryError,
   AIDError,
+  AIDProfileError,
   AIDTokenError,
-  AIDAuthenticationError,
 } from '../core/errors.js';
 import {
   withRequestTimeout,
@@ -17,7 +25,19 @@ import {
   ResponseSizeError,
   readBoundedText,
 } from '../core/http.js';
-import { verifyIdToken } from '../core/jwt.js';
+import {
+  DEFAULT_ALLOWED_SIGNING_ALGORITHMS,
+  resolveSigningAlgorithms,
+  verifyIdToken,
+} from '../core/jwt.js';
+import { createLogger, type AIDLogger } from '../core/logging.js';
+import { fetchUserProfile as requestUserProfile } from '../core/profile.js';
+import {
+  assertCallbackUrl,
+  normalizeReturnTo,
+  validatePostLogoutRedirect,
+} from '../core/redirect.js';
+import { SessionStateEmitter, type AIDSessionListener, type AIDSessionState } from '../core/session-state.js';
 import {
   DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS,
   normalizeTokenResponse,
@@ -38,12 +58,17 @@ import { parseCallback } from './callback.js';
 import { createCodeChallenge, createCodeVerifier, randomString } from './pkce.js';
 import { SessionStorage } from './storage.js';
 
-const TRANSACTION_KEY = 'aid:transaction';
-const SESSION_KEY = 'aid:session';
 const DEFAULT_SCOPE = 'openid profile email';
 const DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_TOKEN_LEEWAY_SECONDS = 60;
+const DEFAULT_CLOCK_SKEW_SECONDS = 60;
+const DEFAULT_STORAGE_PREFIX = 'aid';
 const MAX_TOKEN_RESPONSE_BYTES = 1024 * 1024;
+/**
+ * Smallest delay an automatic refresh may use. Zero-delay timers would spin the
+ * event loop when a provider reports an already-expired token.
+ */
+const MIN_AUTO_REFRESH_DELAY_MS = 1_000;
 
 interface ResolvedAIDConfig {
   issuer: string;
@@ -54,12 +79,46 @@ interface ResolvedAIDConfig {
   transactionTtlMs: number;
   requestTimeoutMs: number;
   unknownExpiryRefreshIntervalMs: number;
+  discoveryCacheTtlMs: number;
+  autoRefresh: boolean;
+  leewaySeconds: number;
+  clockSkewSeconds: number;
+  maxRetries: number;
+  additionalRedirectOrigins: string[];
+  allowedSigningAlgorithms: readonly string[];
+  storageKeyPrefix: string;
 }
 
+export interface AIDProfileOptions {
+  /** Reuse the claims already in the session instead of calling UserInfo. */
+  useCachedSession?: boolean;
+}
+
+export interface AIDRefreshOptions {
+  /** Seconds before expiry at which a token counts as expiring. */
+  leewaySeconds?: number;
+}
+
+/**
+ * Browser and Node entry point for the Ace ID SDK.
+ *
+ * Session handling is deliberately explicit: {@link AID#getAuthState} reports one
+ * of four states, {@link AID#onAuthStateChange} streams changes, and
+ * {@link AID#getValidAccessToken} refreshes on demand. Concurrent refreshes are
+ * collapsed into one request, because a rotating refresh token can only be
+ * redeemed once.
+ */
 export class AID {
   private readonly config: ResolvedAIDConfig;
-  private discoveryPromise?: Promise<OIDCDiscoveryDocument>;
+  private readonly rawConfig: AIDConfig;
+  private readonly discoveryCache: DiscoveryCache;
+  private readonly logger: AIDLogger;
+  private readonly state = new SessionStateEmitter();
+  private readonly transactionKey: string;
+  private readonly sessionKey: string;
   private refreshPromise?: Promise<AIDSession>;
+  private refreshTimer?: ReturnType<typeof setTimeout>;
+  private autoRefreshActive: boolean;
   /**
    * Bumped whenever the session is cleared. An in-flight refresh compares it
    * after its network round trip so a logout cannot be undone by a late write.
@@ -70,80 +129,86 @@ export class AID {
     if (!config || typeof config !== 'object') {
       throw new AIDError('CONFIGURATION_ERROR', 'AID constructor requires a configuration object');
     }
-    if (typeof config.issuer !== 'string' || !config.issuer.trim()) {
-      throw new AIDError('CONFIGURATION_ERROR', 'config.issuer is required');
-    }
-    if (typeof config.clientId !== 'string' || !config.clientId.trim()) {
-      throw new AIDError('CONFIGURATION_ERROR', 'config.clientId is required');
-    }
-    if (typeof config.redirectUri !== 'string' || !config.redirectUri.trim()) {
-      throw new AIDError('CONFIGURATION_ERROR', 'config.redirectUri is required');
-    }
-
-    let redirectUrl: URL;
-    try {
-      redirectUrl = new URL(config.redirectUri);
-    } catch (err) {
-      throw new AIDError('CONFIGURATION_ERROR', 'config.redirectUri must be an absolute URL', err);
-    }
-    const isLocalRedirect =
-      redirectUrl.hostname === 'localhost' || redirectUrl.hostname === '127.0.0.1';
-    if (
-      (redirectUrl.protocol !== 'https:' && !(isLocalRedirect && redirectUrl.protocol === 'http:')) ||
-      redirectUrl.username ||
-      redirectUrl.password
-    ) {
+    // Issuer validity is reported as a discovery error so the failure names the
+    // actual problem instead of a generic configuration complaint.
+    const issuer = normalizeIssuer(config.issuer);
+    // Everything else is checked in one pass so a developer fixes all problems
+    // at once rather than one per restart.
+    const report = validateAIDConfig(config);
+    if (!report.ok) {
+      const failures = report.checks.filter((item) => item.status === 'fail');
       throw new AIDError(
         'CONFIGURATION_ERROR',
-        'config.redirectUri must use HTTPS (HTTP localhost is allowed for development) and must not contain credentials',
+        `Invalid Ace ID configuration — ${failures.map((item) => `${item.name}: ${item.message}`).join(' ')}`,
       );
     }
 
+    const redirectUri = new URL(config.redirectUri).toString();
     const transactionTtlMs = config.transactionTtlMs ?? DEFAULT_TRANSACTION_TTL_MS;
     const requestTimeoutMs = config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    if (!Number.isFinite(transactionTtlMs) || transactionTtlMs <= 0) {
-      throw new AIDError('CONFIGURATION_ERROR', 'transactionTtlMs must be a positive finite number');
-    }
-    if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
-      throw new AIDError('CONFIGURATION_ERROR', 'requestTimeoutMs must be a positive finite number');
-    }
     const unknownExpiryRefreshIntervalMs =
       config.unknownExpiryRefreshIntervalMs ?? DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS;
-    if (!Number.isFinite(unknownExpiryRefreshIntervalMs) || unknownExpiryRefreshIntervalMs < 0) {
-      throw new AIDError(
-        'CONFIGURATION_ERROR',
-        'unknownExpiryRefreshIntervalMs must be a non-negative finite number',
-      );
-    }
+    const discoveryCacheTtlMs = config.discoveryCacheTtlMs ?? DEFAULT_DISCOVERY_CACHE_TTL_MS;
+    const leewaySeconds = config.leewaySeconds ?? DEFAULT_TOKEN_LEEWAY_SECONDS;
+    const clockSkewSeconds = config.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+    const maxRetries = config.maxRetries ?? 2;
 
     this.config = {
-      issuer: normalizeIssuer(config.issuer),
+      issuer,
       clientId: config.clientId,
-      redirectUri: redirectUrl.toString(),
+      redirectUri,
       scope: config.scope ?? DEFAULT_SCOPE,
       storage: config.storage ?? new SessionStorage(),
       transactionTtlMs,
       requestTimeoutMs,
       unknownExpiryRefreshIntervalMs,
+      discoveryCacheTtlMs,
+      autoRefresh: config.autoRefresh === true,
+      leewaySeconds,
+      clockSkewSeconds,
+      maxRetries,
+      additionalRedirectOrigins: (config.additionalRedirectOrigins ?? []).map(
+        (origin) => new URL(origin).origin,
+      ),
+      allowedSigningAlgorithms: config.allowedSigningAlgorithms ?? DEFAULT_ALLOWED_SIGNING_ALGORITHMS,
+      storageKeyPrefix: config.storageKeyPrefix ?? DEFAULT_STORAGE_PREFIX,
     };
+    this.rawConfig = config;
+    this.logger = createLogger({
+      debug: config.debug === true,
+      ...(config.logger ? { logger: config.logger } : {}),
+    });
+    this.discoveryCache = new DiscoveryCache({
+      ttlMs: discoveryCacheTtlMs,
+      timeoutMs: requestTimeoutMs,
+      retry: { maxRetries },
+    });
+    this.transactionKey = `${this.config.storageKeyPrefix}:transaction`;
+    this.sessionKey = `${this.config.storageKeyPrefix}:session`;
+    this.autoRefreshActive = this.config.autoRefresh;
+    // Hydrate the observable state so a listener attached immediately after
+    // construction already sees the persisted session.
+    this.state.update(this.getSession(), { leewaySeconds: this.config.leewaySeconds });
   }
 
-  private getDiscovery(): Promise<OIDCDiscoveryDocument> {
-    if (!this.discoveryPromise) {
-      this.discoveryPromise = fetchDiscovery(this.config.issuer, this.config.requestTimeoutMs)
-        .catch((err) => {
-          this.discoveryPromise = undefined;
-          throw err;
-        });
-    }
-    return this.discoveryPromise;
+  private getDiscovery(options: { forceRefresh?: boolean } = {}): Promise<OIDCDiscoveryDocument> {
+    return this.discoveryCache.get(this.config.issuer, options);
+  }
+
+  /** Drop the cached discovery document, forcing a refetch on the next call. */
+  clearDiscoveryCache(): void {
+    this.discoveryCache.clear();
   }
 
   async signIn(options: AIDAuthorizationOptions & { returnTo?: string } = {}): Promise<void> {
     const authorizationOptions = normalizeAuthorizationOptions(options);
     // Validate before navigating: an off-origin or malformed target must fail
     // here rather than be handed to the host app after a successful login.
-    const returnTo = normalizeReturnTo(options.returnTo, this.config.redirectUri);
+    const returnTo = normalizeReturnTo(
+      options.returnTo,
+      this.config.redirectUri,
+      this.config.additionalRedirectOrigins,
+    );
     const discovery = await this.getDiscovery();
     const state = randomString(32);
     const nonce = randomString(32);
@@ -157,7 +222,7 @@ export class AID {
     };
 
     try {
-      this.config.storage.set(TRANSACTION_KEY, JSON.stringify(transaction));
+      this.config.storage.set(this.transactionKey, JSON.stringify(transaction));
     } catch (err) {
       throw new AIDError('STORAGE_ERROR', 'Failed to persist authorization transaction', err);
     }
@@ -173,13 +238,29 @@ export class AID {
     // existing parameters are preserved, SDK-owned parameters replace collisions,
     // and authorization parameters are never accidentally appended after a fragment.
     for (const [key, value] of params) authorizationUrl.searchParams.set(key, value);
+    this.logger.info('signin.start', 'Starting authorization code flow with PKCE', {
+      issuer: this.config.issuer,
+      prompt: authorizationOptions.prompt,
+    });
     redirectTo(authorizationUrl.toString());
   }
 
   async handleCallback(url?: string): Promise<AIDCallbackResult> {
-    const params = parseCallback(url ?? getCurrentUrl());
+    const current = url ?? getCurrentUrl();
+    // Reject a code that arrived on the wrong origin or path before anything
+    // else happens: exchanging it would send a foreign code to our token endpoint.
+    const validated = assertCallbackUrl(current, this.config.redirectUri, {
+      additionalOrigins: this.config.additionalRedirectOrigins,
+    });
+    const params = parseCallback(validated.toString());
+    if (params.error && params.code) {
+      throw new AIDCallbackError('Callback contains both an "error" and a "code" parameter');
+    }
     if (params.error) {
       this.clearTransaction();
+      this.logger.warn('callback.provider_error', 'Authorization server returned an error', {
+        error: params.error,
+      });
       throw new AIDCallbackError(
         `Authorization error: ${params.error}` +
           (params.errorDescription ? ` — ${params.errorDescription}` : ''),
@@ -205,6 +286,13 @@ export class AID {
       this.clearTransaction();
       throw new AIDCallbackError('OAuth state mismatch or invalid authorization transaction');
     }
+    // The transaction lives in application storage, which the SDK cannot sign.
+    // Re-check that it still names this client's redirect URI before the code is
+    // sent anywhere: a rewritten transaction must not redirect the exchange.
+    if (transaction.redirectUri !== this.config.redirectUri) {
+      this.clearTransaction();
+      throw new AIDCallbackError('Authorization transaction redirect URI does not match this client');
+    }
 
     // The transaction is cleared below, so read the return target before the exchange.
     const returnTo = transaction.returnTo;
@@ -225,7 +313,12 @@ export class AID {
       const claims = await verifyIdToken({
         idToken: tokens.idToken, jwksUri: discovery.jwks_uri,
         issuer: discovery.issuer, audience: this.config.clientId, nonce: transaction.nonce,
-        maxAgeSeconds: transaction.maxAgeSeconds,
+        clockToleranceSeconds: this.config.clockSkewSeconds,
+        algorithms: resolveSigningAlgorithms(
+          discovery.id_token_signing_alg_values_supported,
+          this.config.allowedSigningAlgorithms,
+        ),
+        ...(transaction.maxAgeSeconds !== undefined ? { maxAgeSeconds: transaction.maxAgeSeconds } : {}),
       });
       // A sign-out that happened while the code exchange was in flight wins:
       // completing the callback must not create a session the user just ended.
@@ -239,26 +332,61 @@ export class AID {
       // Persist the session without the navigation hint: returnTo belongs to
       // this one callback, not to the stored session lifetime.
       this.saveSession(session);
+      this.logger.info('callback.completed', 'Authorization code exchanged and ID token verified', {
+        subject: session.user.sub,
+      });
       return returnTo === undefined ? session : { ...session, returnTo };
+    } catch (err) {
+      this.logger.warn('callback.failed', 'Authorization callback failed', { error: err });
+      throw err;
     } finally {
       this.clearTransaction();
     }
   }
 
   getSession(): AIDSession | null {
-    const raw = this.config.storage.get(SESSION_KEY);
+    const raw = this.config.storage.get(this.sessionKey);
     if (!raw) return null;
     try {
       const parsed: unknown = JSON.parse(raw);
       if (!isValidSession(parsed)) {
-        this.config.storage.remove(SESSION_KEY);
+        this.config.storage.remove(this.sessionKey);
+        this.logger.warn('session.corrupt', 'Stored session failed validation and was discarded');
         return null;
       }
       return parsed;
     } catch {
-      this.config.storage.remove(SESSION_KEY);
+      this.config.storage.remove(this.sessionKey);
+      this.logger.warn('session.corrupt', 'Stored session was not valid JSON and was discarded');
       return null;
     }
+  }
+
+  /** Alias of {@link AID#getSession} matching the cross-platform API name. */
+  currentSession(): AIDSession | null {
+    return this.getSession();
+  }
+
+  /** Current session state, re-derived from storage before it is returned. */
+  getAuthState(): AIDSessionState {
+    return this.state.update(this.getSession(), { leewaySeconds: this.config.leewaySeconds });
+  }
+
+  /**
+   * Subscribe to session-state changes.
+   *
+   * The listener is invoked once immediately with the current state, then on
+   * every real change (sign-in, refresh, expiry, sign-out, failed refresh).
+   * Returns an unsubscribe function.
+   */
+  onAuthStateChange(listener: AIDSessionListener): () => void {
+    const unsubscribe = this.state.subscribe(listener);
+    try {
+      listener(this.getAuthState());
+    } catch {
+      // The initial synchronous call is best-effort, like later notifications.
+    }
+    return unsubscribe;
   }
 
   isAuthenticated(): boolean {
@@ -282,6 +410,11 @@ export class AID {
     finally { this.refreshPromise = undefined; }
   }
 
+  /** Alias of {@link AID#refresh} matching the cross-platform API name. */
+  async refreshSession(): Promise<AIDSession> {
+    return this.refresh();
+  }
+
   /**
    * Return a usable access token and refresh it when expired or near expiry.
    *
@@ -290,7 +423,7 @@ export class AID {
    * reused instead of re-requested, so an unreported lifetime cannot trigger a
    * refresh on every call (which also breaks refresh-token rotation).
    */
-  async getValidAccessToken(leewaySeconds = DEFAULT_TOKEN_LEEWAY_SECONDS): Promise<string | null> {
+  async getValidAccessToken(leewaySeconds = this.config.leewaySeconds): Promise<string | null> {
     if (!Number.isFinite(leewaySeconds) || leewaySeconds < 0) {
       throw new AIDError('CONFIGURATION_ERROR', 'leewaySeconds must be a non-negative finite number');
     }
@@ -302,7 +435,52 @@ export class AID {
     });
     if (!needsRefresh) return session.tokens.accessToken;
     if (!session.tokens.refreshToken) { this.clearSession(); return null; }
-    return (await this.refresh()).tokens.accessToken;
+    try {
+      return (await this.refresh()).tokens.accessToken;
+    } catch (err) {
+      this.reportRefreshFailure(err);
+      throw err;
+    }
+  }
+
+  /**
+   * Fetch the account profile from the UserInfo endpoint.
+   *
+   * Pass `useCachedSession: true` to skip the network call and return the claims
+   * already held in the session. The returned user is persisted in the session so
+   * `getUser()` reflects it.
+   */
+  async fetchUserProfile(options: AIDProfileOptions = {}): Promise<AIDUser> {
+    const session = this.getSession();
+    if (!session) throw new AIDAuthenticationError('No authenticated session exists');
+    if (options.useCachedSession === true) return session.user;
+
+    const discovery = await this.getDiscovery();
+    if (!discovery.userinfo_endpoint) {
+      throw new AIDProfileError('The identity provider does not advertise a userinfo_endpoint');
+    }
+    const accessToken = await this.getValidAccessToken();
+    if (!accessToken) throw new AIDAuthenticationError('No usable access token for the profile request');
+
+    const profile = await requestUserProfile({
+      userinfoEndpoint: discovery.userinfo_endpoint,
+      accessToken,
+      expectedSubject: session.user.sub,
+      timeoutMs: this.config.requestTimeoutMs,
+      retry: { maxRetries: this.config.maxRetries },
+    });
+
+    // Re-read the session: a concurrent refresh may have replaced it while the
+    // profile request was in flight, and that newer session must win.
+    const latest = this.getSession() ?? session;
+    if (latest.user.sub !== profile.user.sub) {
+      throw new AIDProfileError('Profile subject changed while the request was in flight');
+    }
+    this.saveSession({ ...latest, user: profile.user });
+    this.logger.debug('profile.updated', 'Session user refreshed from UserInfo', {
+      subject: profile.user.sub,
+    });
+    return profile.user;
   }
 
   async signOut(options: { redirectTo?: string } = {}): Promise<void> {
@@ -310,9 +488,13 @@ export class AID {
     // clearSession() also advances the epoch, so a refresh already in flight
     // cannot re-persist the session after logout.
     this.clearSession();
-    this.config.storage.remove(TRANSACTION_KEY);
+    this.config.storage.remove(this.transactionKey);
     const safeRedirect = options.redirectTo
-      ? validateRedirectTarget(options.redirectTo, this.config.redirectUri)
+      ? validatePostLogoutRedirect(
+        options.redirectTo,
+        this.config.redirectUri,
+        this.config.additionalRedirectOrigins,
+      )
       : undefined;
     let endSession: string | undefined;
 
@@ -327,10 +509,15 @@ export class AID {
           });
         } catch {
           // Local logout must not depend on remote revocation.
+          this.logger.warn('logout.revoke_failed', 'Token revocation failed; local session already cleared');
         }
       }
       endSession = discovery.end_session_endpoint;
     } catch { endSession = undefined; }
+
+    this.logger.info('logout.completed', 'Local session cleared', {
+      providerLogout: Boolean(endSession),
+    });
 
     if (endSession) {
       const params = new URLSearchParams();
@@ -341,6 +528,97 @@ export class AID {
       return;
     }
     if (safeRedirect) redirectTo(safeRedirect);
+  }
+
+  /** Alias of {@link AID#signOut} matching the cross-platform API name. */
+  async logout(options: { redirectTo?: string } = {}): Promise<void> {
+    return this.signOut(options);
+  }
+
+  /**
+   * Start refreshing the access token shortly before it expires.
+   *
+   * Automatic refresh is opt-in (`autoRefresh: true` or this method) because a
+   * timer in a server or test process is a side effect the host did not ask for.
+   */
+  startAutoRefresh(): void {
+    this.autoRefreshActive = true;
+    this.scheduleAutoRefresh();
+  }
+
+  /** Stop the automatic refresh timer. The session itself is untouched. */
+  stopAutoRefresh(): void {
+    this.autoRefreshActive = false;
+    this.cancelAutoRefresh();
+  }
+
+  /**
+   * Check configuration offline, then against the live issuer.
+   *
+   * Never throws: every problem is reported as a named check so the caller can
+   * render it or log it.
+   */
+  async validateConfiguration(): Promise<AIDConfigReport> {
+    const base = validateAIDConfig(this.rawConfig);
+    const checks: AIDConfigCheck[] = [...base.checks];
+    try {
+      const discovery = await this.discoveryCache.get(this.config.issuer, { forceRefresh: true });
+      checks.push({ name: 'discovery', status: 'pass', message: `Discovery succeeded for ${discovery.issuer}.` });
+      const methods = Array.isArray(discovery.code_challenge_methods_supported)
+        ? discovery.code_challenge_methods_supported
+        : undefined;
+      const pkceOk = methods === undefined || methods.includes('S256');
+      checks.push({
+        name: 'pkce-s256',
+        status: pkceOk ? 'pass' : 'fail',
+        message: pkceOk
+          ? 'The provider supports the required S256 PKCE method (or does not restrict it).'
+          : 'The provider does not advertise S256 PKCE, which this SDK requires.',
+      });
+      checks.push({
+        name: 'jwks',
+        status: discovery.jwks_uri ? 'pass' : 'fail',
+        message: discovery.jwks_uri
+          ? 'A JWKS endpoint is advertised, so ID tokens can be verified.'
+          : 'No jwks_uri is advertised; ID tokens cannot be verified.',
+      });
+      try {
+        resolveSigningAlgorithms(discovery.id_token_signing_alg_values_supported, this.config.allowedSigningAlgorithms);
+        checks.push({ name: 'signing-algorithm', status: 'pass', message: 'The provider advertises an accepted asymmetric signing algorithm.' });
+      } catch (err) {
+        checks.push({ name: 'signing-algorithm', status: 'fail', message: (err as Error).message });
+      }
+      const grants = Array.isArray(discovery.grant_types_supported) ? discovery.grant_types_supported : undefined;
+      const refreshOk = grants === undefined || grants.includes('refresh_token');
+      checks.push({
+        name: 'refresh-grant',
+        status: refreshOk ? 'pass' : 'warn',
+        message: refreshOk
+          ? 'The provider advertises the refresh_token grant.'
+          : 'The provider does not advertise the refresh_token grant; sessions will end at access-token expiry.',
+      });
+      checks.push({
+        name: 'userinfo',
+        status: discovery.userinfo_endpoint ? 'pass' : 'warn',
+        message: discovery.userinfo_endpoint
+          ? 'A UserInfo endpoint is advertised for profile retrieval.'
+          : 'No UserInfo endpoint is advertised; fetchUserProfile() will fail.',
+      });
+      checks.push({
+        name: 'provider-logout',
+        status: discovery.end_session_endpoint ? 'pass' : 'warn',
+        message: discovery.end_session_endpoint
+          ? 'Provider logout is advertised; signOut() will also end the provider session.'
+          : 'No end_session_endpoint is advertised; signOut() clears local state only.',
+      });
+    } catch (err) {
+      checks.push({
+        name: 'discovery',
+        status: 'fail',
+        message: `Discovery failed: ${(err as Error).message}`,
+      });
+    }
+    return summarizeAIDChecks(checks);
   }
 
   private async performRefresh(): Promise<AIDSession> {
@@ -377,6 +655,11 @@ export class AID {
         idToken: tokens.idToken, jwksUri: discovery.jwks_uri,
         issuer: discovery.issuer, audience: this.config.clientId,
         nonce: session.nonce, nonceRequired: false,
+        clockToleranceSeconds: this.config.clockSkewSeconds,
+        algorithms: resolveSigningAlgorithms(
+          discovery.id_token_signing_alg_values_supported,
+          this.config.allowedSigningAlgorithms,
+        ),
       });
       if (typeof claims.sub !== 'string' || claims.sub !== session.user.sub) {
         throw new AIDTokenError('Refreshed ID token subject does not match the current session');
@@ -392,21 +675,78 @@ export class AID {
     }
     const refreshedSession: AIDSession = { user, tokens, nonce: session.nonce };
     this.saveSession(refreshedSession);
+    this.logger.debug('token.refreshed', 'Access token refreshed', {
+      expiresAt: tokens.expiresAt,
+      rotated: Boolean(tokens.refreshToken),
+    });
     return refreshedSession;
   }
 
+  /** Emit a refresh failure without changing what is stored. */
+  private reportRefreshFailure(err: unknown): void {
+    const session = this.getSession();
+    this.state.set({
+      status: 'refresh-failed',
+      error: err instanceof Error ? err : new Error('Token refresh failed'),
+      ...(session ? { session } : {}),
+    });
+    // A failed automatic refresh stops the timer rather than retrying in a loop
+    // against a provider that is rejecting us. The next explicit call restarts it.
+    this.cancelAutoRefresh();
+  }
+
   private saveSession(session: AIDSession): void {
-    try { this.config.storage.set(SESSION_KEY, JSON.stringify(session)); }
+    try { this.config.storage.set(this.sessionKey, JSON.stringify(session)); }
     catch (err) { throw new AIDError('STORAGE_ERROR', 'Failed to persist session', err); }
+    this.state.update(session, { leewaySeconds: this.config.leewaySeconds });
+    this.scheduleAutoRefresh();
   }
 
   private clearSession(): void {
     this.sessionEpoch += 1;
-    this.config.storage.remove(SESSION_KEY);
+    this.config.storage.remove(this.sessionKey);
+    this.cancelAutoRefresh();
+    this.state.set({ status: 'unauthenticated' });
+  }
+
+  private scheduleAutoRefresh(): void {
+    if (!this.autoRefreshActive) return;
+    this.cancelAutoRefresh();
+    const session = this.getSession();
+    if (!session || !session.tokens.refreshToken) return;
+    const expiresAt = session.tokens.expiresAt;
+    if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt <= 0) return;
+
+    const delay = expiresAt - this.config.leewaySeconds * 1000 - Date.now();
+    const timer = setTimeout(() => {
+      this.refreshTimer = undefined;
+      void this.runScheduledRefresh();
+    }, Math.max(delay, MIN_AUTO_REFRESH_DELAY_MS));
+    // A pending refresh must not keep a Node process alive on its own.
+    (timer as { unref?: () => void }).unref?.();
+    this.refreshTimer = timer;
+  }
+
+  private async runScheduledRefresh(): Promise<void> {
+    if (!this.autoRefreshActive) return;
+    const session = this.getSession();
+    if (!session?.tokens.refreshToken) return;
+    try {
+      await this.refresh();
+    } catch (err) {
+      this.reportRefreshFailure(err);
+    }
+  }
+
+  private cancelAutoRefresh(): void {
+    if (this.refreshTimer !== undefined) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
   }
 
   private loadTransaction(): AuthTransaction | null {
-    const raw = this.config.storage.get(TRANSACTION_KEY);
+    const raw = this.config.storage.get(this.transactionKey);
     if (!raw) return null;
     try {
       const value: unknown = JSON.parse(raw);
@@ -427,7 +767,11 @@ export class AID {
       // become an open redirect handed back to the host application.
       if (transaction.returnTo !== undefined) {
         try {
-          normalizeReturnTo(transaction.returnTo, transaction.redirectUri);
+          normalizeReturnTo(
+            transaction.returnTo,
+            transaction.redirectUri,
+            this.config.additionalRedirectOrigins,
+          );
         } catch {
           this.clearTransaction(); return null;
         }
@@ -436,7 +780,7 @@ export class AID {
     } catch { this.clearTransaction(); return null; }
   }
 
-  private clearTransaction(): void { this.config.storage.remove(TRANSACTION_KEY); }
+  private clearTransaction(): void { this.config.storage.remove(this.transactionKey); }
 }
 
 interface ExchangeOpts {
@@ -450,6 +794,7 @@ async function exchangeCodeForTokens(opts: ExchangeOpts): Promise<AIDTokens> {
     redirect_uri: opts.redirectUri, client_id: opts.clientId,
     code_verifier: opts.codeVerifier,
   });
+  // An authorization code is single-use: never retried, even on a 503.
   const { response, payload } = await postFormJson(
     opts.tokenEndpoint, body, 'Token endpoint request failed', opts.timeoutMs,
   );
@@ -466,6 +811,8 @@ async function refreshTokens(opts: RefreshOpts): Promise<AIDTokens> {
     grant_type: 'refresh_token', refresh_token: opts.refreshToken, client_id: opts.clientId,
   });
   if (opts.scope) body.set('scope', opts.scope);
+  // A rotating refresh token may already have been redeemed by the failed
+  // attempt, so a retry could invalidate the whole session. No retries here.
   const { response, payload } = await postFormJson(
     opts.tokenEndpoint, body, 'Token refresh request failed', opts.timeoutMs,
   );
@@ -529,69 +876,6 @@ async function readResponseJson(res: Response): Promise<Record<string, unknown>>
   return value as Record<string, unknown>;
 }
 
-/**
- * Validate an application-supplied post-login target.
- *
- * The value is resolved against the registered redirect URI and must stay on
- * that origin, so `returnTo` can never become an open redirect. Relative paths
- * (`/dashboard`, `dashboard`) are supported and normalised to absolute URLs.
- */
-function normalizeReturnTo(returnTo: unknown, redirectUri: string): string | undefined {
-  if (returnTo === undefined || returnTo === null) return undefined;
-  if (typeof returnTo !== 'string' || returnTo.trim().length === 0) {
-    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must be a non-empty string');
-  }
-  if (/[\u0000-\u001f\u007f]/.test(returnTo)) {
-    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must not contain control characters');
-  }
-
-  const callback = new URL(redirectUri);
-  let target: URL;
-  try {
-    target = new URL(returnTo, callback);
-  } catch (err) {
-    throw new AIDError(
-      'CONFIGURATION_ERROR',
-      'returnTo must be an absolute URL or a path within the application',
-      err,
-    );
-  }
-
-  if (target.origin !== callback.origin) {
-    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must share the registered redirect URI origin');
-  }
-  if (target.username || target.password) {
-    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must not contain credentials');
-  }
-  const isLocalHost = target.hostname === 'localhost' || target.hostname === '127.0.0.1';
-  if (target.protocol !== 'https:' && !(isLocalHost && target.protocol === 'http:')) {
-    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must use HTTPS');
-  }
-
-  return target.toString();
-}
-
-function validateRedirectTarget(target: string, redirectUri: string): string {
-  let candidate: URL;
-  let callback: URL;
-  try { candidate = new URL(target); callback = new URL(redirectUri); }
-  catch (err) {
-    throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must be an absolute URL', err);
-  }
-  if (candidate.protocol !== 'https:' &&
-      !(candidate.protocol === 'http:' &&
-        (candidate.hostname === 'localhost' || candidate.hostname === '127.0.0.1'))) {
-    throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must use HTTPS');
-  }
-  if (candidate.username || candidate.password) {
-    throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must not contain credentials');
-  }
-  if (candidate.origin !== callback.origin) {
-    throw new AIDError('CONFIGURATION_ERROR', 'signOut redirectTo must share the registered redirect URI origin');
-  }
-  return candidate.toString();
-}
-
 function isValidSession(value: unknown): value is AIDSession {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const session = value as Record<string, unknown>;
@@ -632,6 +916,7 @@ function parseTokenResponse(
     throw new AIDTokenError(
       `Token endpoint error: ${code}${desc}`, undefined,
       typeof json.error === 'string' ? json.error : undefined,
+      { retryable: false },
     );
   }
   if (typeof json.access_token !== 'string' || !json.access_token) {
