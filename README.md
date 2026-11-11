@@ -7,11 +7,13 @@ JavaScript/TypeScript, Android, and iOS SDKs for authenticating users with Ace I
 
 ## Release status
 
-The current release work targets version `0.2.3`. It is a release candidate and is **not published yet**. Do not install this version or distribute platform binaries until the release is tagged and its official artifacts are available.
+| Platform | Version | Status |
+| --- | --- | --- |
+| JavaScript / TypeScript | `0.2.3` | Published on [npm](https://www.npmjs.com/package/ace-id-sdk) |
+| Android | `0.2.3` | Maven Central publication pending |
+| iOS (Swift Package) | `0.2.3` | Source only; no tagged release yet |
 
 ## JavaScript / TypeScript
-
-Once the version is published:
 
 ```bash
 npm install ace-id-sdk
@@ -39,7 +41,7 @@ Use `ace-id-sdk/server` only in trusted server runtimes. The optional React adap
 
 ## Android (Maven Central)
 
-Once `0.2.3` is published to Maven Central:
+Available once the Maven Central publication is released:
 
 ```kotlin
 dependencies {
