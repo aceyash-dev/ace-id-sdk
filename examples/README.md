@@ -22,6 +22,6 @@ Each example assumes an Ace ID project with:
 
 Replace the placeholders before running anything.
 
-Related documentation: [API](../docs/API.md), [React](../docs/REACT.md),
-[Server](../docs/SERVER.md), [Android](../docs/ANDROID.md),
-[Errors](../docs/ERRORS.md).
+Related documentation: [API](../ACE-DOCS/API.md), [React](../ACE-DOCS/REACT.md),
+[Server](../ACE-DOCS/SERVER.md), [Android](../ACE-DOCS/ANDROID.md),
+[Errors](../ACE-DOCS/ERRORS.md), [Migration](../ACE-DOCS/MIGRATION-0.2.4.md).
