@@ -10,7 +10,7 @@ internal class AidDiscoveryCache(
     private val issuer: String,
     private val clientId: String,
     private val ttlMs: Long,
-    private val policy: AidNetworkPolicy = AidNetworkPolicy.default(),
+    private val policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
 ) {
     companion object {
         private const val KEY = "discovery"

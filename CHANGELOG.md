@@ -62,8 +62,9 @@ correctly configured client.
 
 ### Added — Android
 
-- `AidNetworkPolicy` — configurable connect/read timeouts and a retry budget,
-  applied to discovery, JWKS, UserInfo and token calls. Retries are limited to
+- `AidNetworkPolicy` — configurable connect/read timeouts and a retry budget
+  (`AidNetworkPolicy.standard()` / `noRetries()`), applied to discovery, JWKS,
+  UserInfo and token calls. Retries are limited to
   idempotent requests; code exchanges and refreshes are never retried.
 - `AidHttp` — one HTTP path for every call, so timeouts, redirect policy and
   response-size limits cannot drift between endpoints.

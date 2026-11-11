@@ -30,7 +30,7 @@ internal object OidcDiscovery {
     }
 
     @JvmOverloads
-    fun fetch(issuer: String, policy: AidNetworkPolicy = AidNetworkPolicy.default()): OidcConfiguration {
+    fun fetch(issuer: String, policy: AidNetworkPolicy = AidNetworkPolicy.standard()): OidcConfiguration {
         val normalized = normalizeIssuer(issuer)
         val endpoint = normalized + "/.well-known/openid-configuration"
         val response = try {

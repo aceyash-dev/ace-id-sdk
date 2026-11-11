@@ -79,9 +79,15 @@ data class AidNetworkPolicy(
         private const val MAX_ALLOWED_RETRIES = 5
         private const val MAX_BACKOFF_EXPONENT = 6
 
-        /** The SDK default: 10s timeouts and two retries for safe requests. */
+        /**
+         * The SDK default: 10s timeouts and two retries for safe requests.
+         *
+         * Named `standard()` rather than `default()` because `default` is a Java
+         * keyword: a static method with that name cannot be called from Java at
+         * all, which would break the Java interop promise.
+         */
         @JvmStatic
-        fun default(): AidNetworkPolicy = AidNetworkPolicy()
+        fun standard(): AidNetworkPolicy = AidNetworkPolicy()
 
         /** No retries, for callers that need strict single-attempt behaviour. */
         @JvmStatic

@@ -10,7 +10,7 @@ internal object AidTokenClient {
         code: String,
         redirectUri: String,
         codeVerifier: String,
-        policy: AidNetworkPolicy = AidNetworkPolicy.default(),
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
     ): AidTokens {
         val body = form(
             "grant_type" to "authorization_code",
@@ -27,7 +27,7 @@ internal object AidTokenClient {
         clientId: String,
         refreshToken: String,
         scope: String?,
-        policy: AidNetworkPolicy = AidNetworkPolicy.default(),
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
     ): AidTokens {
         val fields = mutableListOf(
             "grant_type" to "refresh_token",

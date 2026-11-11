@@ -53,7 +53,7 @@ public class AceIDJavaApiTest {
             6L * 60L * 60L * 1000L,
             30_000L,
             60L,
-            AidNetworkPolicy.default()
+            AidNetworkPolicy.standard()
         );
 
         assertEquals(2, client.getNetworkPolicy().getMaxRetries());
@@ -68,7 +68,8 @@ public class AceIDJavaApiTest {
             "Unlock Ace ID",
             "Confirm it is you",
             "Your session is stored on this device",
-            "Use password"
+            "Use password",
+            false
         );
 
         assertEquals("Unlock Ace ID", options.getTitle());

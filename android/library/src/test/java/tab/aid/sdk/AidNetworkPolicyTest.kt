@@ -10,7 +10,7 @@ class AidNetworkPolicyTest {
 
     @Test
     fun defaultPolicyIsSane() {
-        val policy = AidNetworkPolicy.default()
+        val policy = AidNetworkPolicy.standard()
         assertEquals(10_000L, policy.connectTimeoutMs.toLong())
         assertEquals(10_000L, policy.readTimeoutMs.toLong())
         assertEquals(2L, policy.maxRetries.toLong())
@@ -19,7 +19,7 @@ class AidNetworkPolicyTest {
 
     @Test
     fun onlyTransientStatusesAreRetryable() {
-        val policy = AidNetworkPolicy.default()
+        val policy = AidNetworkPolicy.standard()
         listOf(408, 425, 429, 500, 502, 503, 504).forEach {
             assertTrue("status $it should be retryable", policy.isRetryableStatus(it))
         }

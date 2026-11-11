@@ -22,7 +22,7 @@ internal object AidJwtVerifier {
         clientId: String,
         nonce: String? = null,
         maxAgeSeconds: Long? = null,
-        policy: AidNetworkPolicy = AidNetworkPolicy.default(),
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
     ): AidUser {
         validateTokenSize(jwt)
         val parts = jwt.split('.')

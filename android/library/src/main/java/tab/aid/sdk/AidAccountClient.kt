@@ -8,7 +8,7 @@ internal object AidAccountClient {
     fun fetch(
         configuration: OidcConfiguration,
         accessToken: String,
-        policy: AidNetworkPolicy = AidNetworkPolicy.default(),
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
     ): AidUser {
         val endpoint = configuration.userInfoEndpoint
             ?: throw AidDiscoveryException("OIDC discovery document is missing userinfo_endpoint")

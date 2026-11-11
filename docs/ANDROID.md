@@ -108,7 +108,8 @@ Retries apply to discovery, JWKS and UserInfo requests only. Authorization-code
 exchanges and refresh requests are never retried: the code is single-use and a
 retried refresh can invalidate a rotating token.
 
-`AidNetworkPolicy.noRetries()` disables retries while keeping the timeouts.
+`AidNetworkPolicy.standard()` is the default policy; `AidNetworkPolicy.noRetries()`
+disables retries while keeping the timeouts.
 
 ## Optional biometric unlock
 
@@ -151,7 +152,7 @@ with an AES-256-GCM key in the Android Keystore, scoped per issuer and client ID
 ## Java interop
 
 The facade is Java-friendly: `AceID` uses `@JvmOverloads`, models are immutable
-data classes with getters, and `AidNetworkPolicy.default()` is `@JvmStatic`.
+data classes with getters, and `AidNetworkPolicy.standard()` is `@JvmStatic` (it is not called `default()`, which is a Java keyword).
 
 ```java
 AceID client = new AceID(issuer, clientId, redirectUri);

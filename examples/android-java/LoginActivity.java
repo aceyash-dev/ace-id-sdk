@@ -36,7 +36,7 @@ public class LoginActivity extends AppCompatActivity {
             6L * 60L * 60L * 1000L,
             30_000L,
             60L,
-            AidNetworkPolicy.default()
+            AidNetworkPolicy.standard()
     );
 
     private final TextView status = new TextView(this);

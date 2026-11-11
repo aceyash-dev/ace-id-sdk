@@ -37,7 +37,7 @@ class AceID @JvmOverloads constructor(
     val accountCacheTtlMs: Long = DEFAULT_ACCOUNT_CACHE_TTL_MS,
     val tokenLeewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
     /** Timeouts and retry budget for every network call. */
-    val networkPolicy: AidNetworkPolicy = AidNetworkPolicy.default(),
+    val networkPolicy: AidNetworkPolicy = AidNetworkPolicy.standard(),
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
     private val refreshMutex = Mutex()
