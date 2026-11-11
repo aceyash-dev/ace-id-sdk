@@ -1,7 +1,6 @@
 package tab.aid.sdk
 
 import org.json.JSONObject
-import java.net.HttpURLConnection
 import java.net.URI
 
 internal object OidcDiscovery {
@@ -30,32 +29,25 @@ internal object OidcDiscovery {
             .toASCIIString().trimEnd('/')
     }
 
-    fun fetch(issuer: String): OidcConfiguration {
+    @JvmOverloads
+    fun fetch(issuer: String, policy: AidNetworkPolicy = AidNetworkPolicy.default()): OidcConfiguration {
         val normalized = normalizeIssuer(issuer)
         val endpoint = normalized + "/.well-known/openid-configuration"
-        val connection = try {
-            URI(endpoint).toURL().openConnection() as HttpURLConnection
-        } catch (e: Exception) {
-            throw AidDiscoveryException("Failed to open OIDC discovery URL", e)
-        }
-        try {
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("Accept", "application/json")
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.instanceFollowRedirects = false
-            if (connection.responseCode !in 200..299) {
-                throw AidDiscoveryException("OIDC discovery request failed: HTTP " + connection.responseCode)
-            }
-            val json = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            return parse(json, normalized)
-        } catch (e: AidDiscoveryException) {
-            throw e
-        } catch (e: Exception) {
+        val response = try {
+            // A discovery GET is idempotent, so transient failures are retried.
+            AidHttp.get(
+                endpoint = endpoint,
+                headers = mapOf("Accept" to "application/json"),
+                policy = policy,
+                retryable = true,
+            )
+        } catch (e: AidException) {
             throw AidDiscoveryException("Failed to fetch OIDC discovery document", e)
-        } finally {
-            connection.disconnect()
         }
+        if (!response.isSuccessful) {
+            throw AidDiscoveryException("OIDC discovery request failed: HTTP " + response.status)
+        }
+        return parse(response.body, normalized)
     }
 
     internal fun parse(json: String, normalizedIssuer: String): OidcConfiguration {

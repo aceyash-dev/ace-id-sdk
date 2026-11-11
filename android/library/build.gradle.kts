@@ -6,7 +6,7 @@ plugins {
 
 val sdkGroup = "cc.ace-base"
 val sdkArtifact = "ace-id-android"
-val sdkVersion = (findProperty("aceIdVersion") as String?) ?: "0.2.3"
+val sdkVersion = (findProperty("aceIdVersion") as String?) ?: "0.2.4"
 
 group = sdkGroup
 version = sdkVersion

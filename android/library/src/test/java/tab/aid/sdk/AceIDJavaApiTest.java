@@ -1,5 +1,7 @@
 package tab.aid.sdk;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -39,5 +41,37 @@ public class AceIDJavaApiTest {
         assertTrue(client.getRedirectUri().equals("com.example.app:/oauth/callback"));
         assertTrue(request.getUrl().contains("response_type=code"));
         assertTrue(request.getCodeVerifier().equals("code-verifier"));
+    }
+
+    @Test
+    public void javaCanConfigureNetworkPolicy() {
+        AceID client = new AceID(
+            "https://identity.example.com",
+            "client-id",
+            "com.example.app:/oauth/callback",
+            "openid profile email",
+            6L * 60L * 60L * 1000L,
+            30_000L,
+            60L,
+            AidNetworkPolicy.default()
+        );
+
+        assertEquals(2, client.getNetworkPolicy().getMaxRetries());
+        assertEquals(10_000, client.getNetworkPolicy().getConnectTimeoutMs());
+        assertTrue(client.getNetworkPolicy().isRetryableStatus(503));
+        assertFalse(client.getNetworkPolicy().isRetryableStatus(401));
+    }
+
+    @Test
+    public void javaCanBuildABiometricOptionsValue() {
+        AidBiometricOptions options = new AidBiometricOptions(
+            "Unlock Ace ID",
+            "Confirm it is you",
+            "Your session is stored on this device",
+            "Use password"
+        );
+
+        assertEquals("Unlock Ace ID", options.getTitle());
+        assertTrue(AidBiometricResult.Succeeded.INSTANCE.isSuccess());
     }
 }

@@ -15,12 +15,14 @@ internal object AidJwtVerifier {
     private const val MAX_JWKS_BYTES = 1_000_000
     private const val CLOCK_SKEW_SECONDS = 60L
 
+    @JvmOverloads
     fun verify(
         jwt: String,
         configuration: OidcConfiguration,
         clientId: String,
         nonce: String? = null,
         maxAgeSeconds: Long? = null,
+        policy: AidNetworkPolicy = AidNetworkPolicy.default(),
     ): AidUser {
         validateTokenSize(jwt)
         val parts = jwt.split('.')
@@ -43,7 +45,7 @@ internal object AidJwtVerifier {
         }
         val signingInput = (parts[0] + "." + parts[1]).toByteArray(Charsets.US_ASCII)
 
-        val key = findKey(configuration.jwksUri, kid, algorithm)
+        val key = findKey(configuration.jwksUri, kid, algorithm, policy)
         val verifier = Signature.getInstance(signatureAlgorithm(algorithm))
         verifier.initVerify(key)
         verifier.update(signingInput)
@@ -107,12 +109,13 @@ internal object AidJwtVerifier {
         jwksUri: String?,
         kid: String?,
         algorithm: String,
+        policy: AidNetworkPolicy,
     ): java.security.PublicKey {
         if (jwksUri.isNullOrBlank()) {
             throw AidDiscoveryException("OIDC discovery document is missing jwks_uri")
         }
 
-        val response = fetch(jwksUri)
+        val response = fetch(jwksUri, policy)
         val keys = response.optJSONArray("keys") ?: throw AidException("JWKS is missing keys")
 
         var fallback: JSONObject? = null
@@ -157,7 +160,7 @@ internal object AidJwtVerifier {
         }
     }
 
-    private fun fetch(url: String): JSONObject {
+    private fun fetch(url: String, policy: AidNetworkPolicy): JSONObject {
         val uri = try {
             URI(url)
         } catch (e: Exception) {
@@ -179,8 +182,8 @@ internal object AidJwtVerifier {
         try {
             connection.requestMethod = "GET"
             connection.instanceFollowRedirects = false
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
+            connection.connectTimeout = policy.connectTimeoutMs
+            connection.readTimeout = policy.readTimeoutMs
             connection.setRequestProperty("Accept", "application/json")
             if (connection.responseCode !in 200..299) {
                 throw AidException("JWKS request failed: HTTP " + connection.responseCode)
