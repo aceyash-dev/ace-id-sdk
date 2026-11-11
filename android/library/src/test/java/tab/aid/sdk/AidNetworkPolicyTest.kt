@@ -31,8 +31,11 @@ class AidNetworkPolicyTest {
     @Test
     fun backoffGrowsThenCaps() {
         val policy = AidNetworkPolicy(baseDelayMs = 100, maxDelayMs = 400)
-        assertEquals(100L, policy.backoffDelayMs(0), 25L)
-        assertEquals(200L, policy.backoffDelayMs(1), 50L)
+        // Jitter spreads each delay by up to a quarter, so assert the window.
+        val first = policy.backoffDelayMs(0)
+        assertTrue("first delay should be about 100ms, was $first", first in 50L..150L)
+        val second = policy.backoffDelayMs(1)
+        assertTrue("second delay should be about 200ms, was $second", second in 100L..300L)
         // Capped: every later attempt stays inside the ceiling.
         for (attempt in 2..10) {
             assertTrue(policy.backoffDelayMs(attempt) <= 400L)
