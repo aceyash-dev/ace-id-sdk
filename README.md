@@ -7,11 +7,13 @@ JavaScript/TypeScript, Android, and iOS SDKs for authenticating users with Ace I
 
 ## Release status
 
-The current release work targets version `0.2.3`. It is a release candidate and is **not published yet**. Do not install this version or distribute platform binaries until the release is tagged and its official artifacts are available.
+| Platform | Version | Status |
+| --- | --- | --- |
+| JavaScript / TypeScript | `0.2.3` | Published on [npm](https://www.npmjs.com/package/ace-id-sdk) |
+| Android | `0.2.3` | Maven Central publication pending |
+| iOS (Swift Package) | `0.2.3` | Source only; no tagged release yet |
 
 ## JavaScript / TypeScript
-
-Once the version is published:
 
 ```bash
 npm install ace-id-sdk
@@ -48,6 +50,16 @@ Use `ace-id-sdk/server` only in trusted server runtimes. The optional React adap
 ID token verification keeps one remote JWK set per `jwks_uri` for the life of the process, so repeated verifications no longer re-fetch the issuer's keys. Rotated signing keys are picked up after a 5-second refetch cooldown; call `clearJwksCache()` to drop the cache explicitly.
 
 Discovery documents (512 KiB) and token responses (1 MiB) are read with a size limit and rejected when exceeded. A refresh or callback that completes after `signOut()` does not recreate the session.
+
+## Android (Maven Central)
+
+Available once the Maven Central publication is released:
+
+```kotlin
+dependencies {
+    implementation("cc.ace-base:ace-id-android:0.2.3")
+}
+```
 
 ## Native SDKs
 
