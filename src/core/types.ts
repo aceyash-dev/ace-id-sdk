@@ -14,6 +14,15 @@ export interface AIDConfig {
   transactionTtlMs?: number;
   /** Network request timeout in milliseconds. Defaults to 10 seconds. */
   requestTimeoutMs?: number;
+  /**
+   * Minimum interval between token refreshes that happen only because the token
+   * endpoint omitted `expires_in`. Defaults to 60 seconds.
+   *
+   * The SDK never invents an expiry for such a token; this bounds how often it
+   * re-requests one so an unreported lifetime cannot cause a refresh storm or
+   * invalidate a rotating refresh token.
+   */
+  unknownExpiryRefreshIntervalMs?: number;
 }
 
 /** Optional OIDC hints for step-up and risk-based authorization. */
@@ -58,7 +67,15 @@ export interface AIDTokens {
   refreshToken?: string;
   tokenType: string;
   expiresIn?: number;
+  /**
+   * Absolute expiry, set only when the provider reported `expires_in`.
+   *
+   * Left undefined when the token endpoint omitted `expires_in`: the SDK does not
+   * fabricate a lifetime. Use `obtainedAt` plus the refresh policy instead.
+   */
   expiresAt?: number;
+  /** When the SDK received this token (epoch milliseconds). */
+  obtainedAt?: number;
   scope?: string;
 }
 
@@ -69,6 +86,17 @@ export interface AIDSession {
   nonce?: string;
 }
 
+/**
+ * Result of a successful authorization callback.
+ *
+ * `returnTo` echoes the same-origin target supplied to `signIn({ returnTo })`.
+ * Navigating there remains the host application's responsibility; the SDK never
+ * redirects on its own after a callback.
+ */
+export interface AIDCallbackResult extends AIDSession {
+  returnTo?: string;
+}
+
 export interface AuthTransaction {
   state: string;
   nonce: string;
@@ -77,7 +105,12 @@ export interface AuthTransaction {
   createdAt: number;
   /** Requested maximum authentication age, enforced against the verified ID token's auth_time. */
   maxAgeSeconds?: number;
-  /** Opaque app-supplied value; the SDK does not navigate to it automatically. */
+  /**
+   * Validated, same-origin target supplied to `signIn({ returnTo })`.
+   *
+   * Consumed by `handleCallback()` and returned on its result. The SDK never
+   * navigates to it automatically; the host application decides when to.
+   */
   returnTo?: string;
 }
 

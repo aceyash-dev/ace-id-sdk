@@ -10,9 +10,19 @@ export interface TokenResponse {
   scope?: string;
 }
 
+/**
+ * Minimum interval between refreshes that are triggered only because the token
+ * endpoint did not report `expires_in`.
+ *
+ * `expires_in` is RECOMMENDED by RFC 6749 §5.1, not required. The SDK never
+ * invents an expiry for such a token; it bounds how often it re-requests one.
+ */
+export const DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS = 60_000;
+
 export function normalizeTokenResponse(
   response: TokenResponse,
   previousRefreshToken?: string,
+  now = Date.now(),
 ): AIDTokens {
   if (
     !response ||
@@ -45,10 +55,11 @@ export function normalizeTokenResponse(
         ? response.token_type
         : "Bearer",
     expiresIn,
-    expiresAt:
-      expiresIn !== undefined
-        ? Date.now() + expiresIn * 1000
-        : undefined,
+    // Only ever set from a reported lifetime. A token whose expiry the provider
+    // did not state keeps `expiresAt` undefined; `obtainedAt` records when the
+    // SDK received it so refresh throttling has a real anchor.
+    expiresAt: expiresIn !== undefined ? now + expiresIn * 1000 : undefined,
+    obtainedAt: now,
     refreshToken,
     idToken:
       typeof response.id_token === "string"
@@ -61,18 +72,73 @@ export function normalizeTokenResponse(
   };
 }
 
+export function hasKnownExpiry(tokens: AIDTokens): boolean {
+  return (
+    typeof tokens.expiresAt === 'number' &&
+    Number.isFinite(tokens.expiresAt) &&
+    tokens.expiresAt > 0
+  );
+}
+
+/**
+ * Whether a token must be treated as expired.
+ *
+ * An unknown expiry is never treated as valid, so this returns true when the
+ * provider did not state a lifetime. Callers deciding *whether to refresh* must
+ * use {@link shouldRefreshToken} instead, which applies the refresh-storm guard.
+ */
 export function isTokenExpired(
   tokens: AIDTokens,
   leewaySeconds = 60,
+  now = Date.now(),
 ): boolean {
-  if (
-    typeof tokens.expiresAt !== 'number' ||
-    !Number.isFinite(tokens.expiresAt) ||
-    tokens.expiresAt <= 0
-  ) {
-    // An access token with unknown expiry is not safe to treat as valid.
+  if (!hasKnownExpiry(tokens)) {
     return true;
   }
 
-  return Date.now() >= tokens.expiresAt - leewaySeconds * 1000;
+  return now >= (tokens.expiresAt as number) - leewaySeconds * 1000;
+}
+
+export interface TokenRefreshPolicy {
+  /** Refresh this many seconds before the reported expiry. Defaults to 60. */
+  leewaySeconds?: number;
+  /**
+   * Minimum interval between refreshes caused solely by an unreported expiry.
+   * Defaults to {@link DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS}.
+   */
+  unknownExpiryRefreshIntervalMs?: number;
+  now?: number;
+}
+
+/**
+ * Decide whether the SDK should refresh before using these tokens.
+ *
+ * - Reported expiry: refresh inside the leeway window, exactly as before.
+ * - Unreported expiry: the token is not claimed to be unexpired, but a token the
+ *   SDK obtained within `unknownExpiryRefreshIntervalMs` is reused rather than
+ *   re-requested. That bounds refreshes to one per interval instead of one per
+ *   call, which is what previously broke refresh-token rotation under load.
+ */
+export function shouldRefreshToken(
+  tokens: AIDTokens,
+  policy: TokenRefreshPolicy = {},
+): boolean {
+  const now = policy.now ?? Date.now();
+
+  if (hasKnownExpiry(tokens)) {
+    return isTokenExpired(tokens, policy.leewaySeconds ?? 60, now);
+  }
+
+  const interval =
+    policy.unknownExpiryRefreshIntervalMs ??
+    DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS;
+  const obtainedAt =
+    typeof tokens.obtainedAt === 'number' && Number.isFinite(tokens.obtainedAt)
+      ? tokens.obtainedAt
+      : 0;
+
+  // A token with no known issue time cannot be age-bounded, so refresh.
+  if (obtainedAt <= 0) return true;
+
+  return now - obtainedAt >= interval;
 }

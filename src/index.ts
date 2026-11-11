@@ -12,11 +12,20 @@ export type { AIDErrorCode } from './core/errors.js';
 export type {
   AIDConfig,
   AIDAuthorizationOptions,
+  AIDCallbackResult,
   AIDSession,
   AIDStorage,
   AIDTokens,
   AIDUser,
   AIDProjectConfig,
 } from './core/types.js';
+export {
+  DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS,
+  hasKnownExpiry,
+  isTokenExpired,
+  shouldRefreshToken,
+} from './core/tokens.js';
+export type { TokenRefreshPolicy } from './core/tokens.js';
+export { clearJwksCache } from './core/jwt.js';
 
 export { createAIDFromProjectConfig } from './browser/project-config.js';

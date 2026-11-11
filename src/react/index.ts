@@ -8,7 +8,7 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { AID } from '../browser/client.js';
-import type { AIDSession } from '../core/types.js';
+import type { AIDCallbackResult, AIDSession } from '../core/types.js';
 import { AIDError } from '../core/errors.js';
 
 export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
@@ -18,9 +18,14 @@ export interface AuthContextValue {
   session: AIDSession | null;
   status: AuthStatus;
   error: Error | null;
+  /**
+   * Validated same-origin target from the callback that produced the current
+   * session, or null. Navigating there is the host app's responsibility.
+   */
+  returnTo: string | null;
   refreshSession(): void;
   signIn(options?: { returnTo?: string }): Promise<void>;
-  handleCallback(url?: string): Promise<AIDSession>;
+  handleCallback(url?: string): Promise<AIDCallbackResult>;
   signOut(options?: { redirectTo?: string }): Promise<void>;
 }
 
@@ -38,6 +43,7 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
   const [session, setSession] = useState<AIDSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>(hydrateOnMount ? 'loading' : 'unauthenticated');
   const [error, setError] = useState<Error | null>(null);
+  const [returnTo, setReturnTo] = useState<string | null>(null);
 
   useEffect(() => {
     if (!hydrateOnMount) return;
@@ -62,6 +68,7 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
     session,
     status,
     error,
+    returnTo,
     refreshSession() {
       try {
         const current = client.getSession();
@@ -84,6 +91,7 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
       try {
         const next = await client.handleCallback(url);
         setSession(next);
+        setReturnTo(next.returnTo ?? null);
         setStatus('authenticated');
         return next;
       } catch (cause) {
@@ -95,11 +103,12 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
     async signOut(options) {
       setError(null);
       setSession(null);
+      setReturnTo(null);
       setStatus('unauthenticated');
       try { await client.signOut(options); }
       catch (cause) { setError(toError(cause)); setStatus('error'); throw cause; }
     },
-  }), [client, session, status, error]);
+  }), [client, session, status, error, returnTo]);
 
   return createElement(AuthContext.Provider, { value }, children);
 }

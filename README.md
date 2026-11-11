@@ -37,6 +37,18 @@ console.log(session.user);
 
 Use `ace-id-sdk/server` only in trusted server runtimes. The optional React adapter is available from `ace-id-sdk/react`. Never expose a client secret in browser or mobile code.
 
+## Post-login redirects
+
+`signIn({ returnTo })` accepts a path (`/dashboard`) or an absolute URL on the registered redirect URI origin. The SDK validates the value before redirecting to the provider, keeps it in the authorization transaction, and returns it from `handleCallback()` — also exposed as `useAuth().returnTo` by the React adapter. The SDK never navigates after the callback: routing stays with the host application. Off-origin, protocol-relative, credentialed or non-HTTP values are rejected with a `CONFIGURATION_ERROR`.
+
+## Token and session behaviour
+
+`expires_in` is only RECOMMENDED by RFC 6749 §5.1, so the SDK never invents a lifetime. A token response without `expires_in` keeps `expiresAt` undefined and records `obtainedAt` instead. `getValidAccessToken()` then reuses that token for `unknownExpiryRefreshIntervalMs` (default 60 seconds) before requesting a new one, which bounds refreshes to one per interval instead of one per call and keeps refresh-token rotation intact. `isAuthenticated()` stays conservative and reports `false` when the expiry is unknown.
+
+ID token verification keeps one remote JWK set per `jwks_uri` for the life of the process, so repeated verifications no longer re-fetch the issuer's keys. Rotated signing keys are picked up after a 5-second refetch cooldown; call `clearJwksCache()` to drop the cache explicitly.
+
+Discovery documents (512 KiB) and token responses (1 MiB) are read with a size limit and rejected when exceeded. A refresh or callback that completes after `signOut()` does not recreate the session.
+
 ## Native SDKs
 
 - [Android SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-android)

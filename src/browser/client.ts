@@ -11,15 +11,22 @@ import {
   AIDTokenError,
   AIDAuthenticationError,
 } from '../core/errors.js';
-import { withRequestTimeout, DEFAULT_REQUEST_TIMEOUT_MS } from '../core/http.js';
+import {
+  withRequestTimeout,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  ResponseSizeError,
+  readBoundedText,
+} from '../core/http.js';
 import { verifyIdToken } from '../core/jwt.js';
 import {
-  isTokenExpired,
+  DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS,
   normalizeTokenResponse,
+  shouldRefreshToken,
   type TokenResponse,
 } from '../core/tokens.js';
 import type {
   AIDConfig,
+  AIDCallbackResult,
   AIDSession,
   AIDStorage,
   AIDTokens,
@@ -36,6 +43,7 @@ const SESSION_KEY = 'aid:session';
 const DEFAULT_SCOPE = 'openid profile email';
 const DEFAULT_TRANSACTION_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_TOKEN_LEEWAY_SECONDS = 60;
+const MAX_TOKEN_RESPONSE_BYTES = 1024 * 1024;
 
 interface ResolvedAIDConfig {
   issuer: string;
@@ -45,12 +53,18 @@ interface ResolvedAIDConfig {
   storage: AIDStorage;
   transactionTtlMs: number;
   requestTimeoutMs: number;
+  unknownExpiryRefreshIntervalMs: number;
 }
 
 export class AID {
   private readonly config: ResolvedAIDConfig;
   private discoveryPromise?: Promise<OIDCDiscoveryDocument>;
   private refreshPromise?: Promise<AIDSession>;
+  /**
+   * Bumped whenever the session is cleared. An in-flight refresh compares it
+   * after its network round trip so a logout cannot be undone by a late write.
+   */
+  private sessionEpoch = 0;
 
   constructor(config: AIDConfig) {
     if (!config || typeof config !== 'object') {
@@ -93,6 +107,14 @@ export class AID {
     if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
       throw new AIDError('CONFIGURATION_ERROR', 'requestTimeoutMs must be a positive finite number');
     }
+    const unknownExpiryRefreshIntervalMs =
+      config.unknownExpiryRefreshIntervalMs ?? DEFAULT_UNKNOWN_EXPIRY_REFRESH_INTERVAL_MS;
+    if (!Number.isFinite(unknownExpiryRefreshIntervalMs) || unknownExpiryRefreshIntervalMs < 0) {
+      throw new AIDError(
+        'CONFIGURATION_ERROR',
+        'unknownExpiryRefreshIntervalMs must be a non-negative finite number',
+      );
+    }
 
     this.config = {
       issuer: normalizeIssuer(config.issuer),
@@ -102,6 +124,7 @@ export class AID {
       storage: config.storage ?? new SessionStorage(),
       transactionTtlMs,
       requestTimeoutMs,
+      unknownExpiryRefreshIntervalMs,
     };
   }
 
@@ -118,6 +141,9 @@ export class AID {
 
   async signIn(options: AIDAuthorizationOptions & { returnTo?: string } = {}): Promise<void> {
     const authorizationOptions = normalizeAuthorizationOptions(options);
+    // Validate before navigating: an off-origin or malformed target must fail
+    // here rather than be handed to the host app after a successful login.
+    const returnTo = normalizeReturnTo(options.returnTo, this.config.redirectUri);
     const discovery = await this.getDiscovery();
     const state = randomString(32);
     const nonce = randomString(32);
@@ -127,7 +153,7 @@ export class AID {
       state, nonce, codeVerifier, redirectUri: this.config.redirectUri,
       createdAt: Date.now(),
       ...(options.maxAge !== undefined ? { maxAgeSeconds: options.maxAge } : {}),
-      returnTo: options.returnTo,
+      ...(returnTo !== undefined ? { returnTo } : {}),
     };
 
     try {
@@ -150,7 +176,7 @@ export class AID {
     redirectTo(authorizationUrl.toString());
   }
 
-  async handleCallback(url?: string): Promise<AIDSession> {
+  async handleCallback(url?: string): Promise<AIDCallbackResult> {
     const params = parseCallback(url ?? getCurrentUrl());
     if (params.error) {
       this.clearTransaction();
@@ -180,6 +206,10 @@ export class AID {
       throw new AIDCallbackError('OAuth state mismatch or invalid authorization transaction');
     }
 
+    // The transaction is cleared below, so read the return target before the exchange.
+    const returnTo = transaction.returnTo;
+    const epoch = this.sessionEpoch;
+
     try {
       const discovery = await this.getDiscovery();
       const tokens = await exchangeCodeForTokens({
@@ -197,12 +227,19 @@ export class AID {
         issuer: discovery.issuer, audience: this.config.clientId, nonce: transaction.nonce,
         maxAgeSeconds: transaction.maxAgeSeconds,
       });
+      // A sign-out that happened while the code exchange was in flight wins:
+      // completing the callback must not create a session the user just ended.
+      if (this.sessionEpoch !== epoch) {
+        throw new AIDCallbackError('Sign-out occurred while the callback was being processed');
+      }
       const session: AIDSession = {
         user: userFromClaims(claims as Record<string, unknown>),
         tokens, nonce: transaction.nonce,
       };
+      // Persist the session without the navigation hint: returnTo belongs to
+      // this one callback, not to the stored session lifetime.
       this.saveSession(session);
-      return session;
+      return returnTo === undefined ? session : { ...session, returnTo };
     } finally {
       this.clearTransaction();
     }
@@ -245,21 +282,34 @@ export class AID {
     finally { this.refreshPromise = undefined; }
   }
 
-  /** Return a usable access token and refresh it when expired or near expiry. */
+  /**
+   * Return a usable access token and refresh it when expired or near expiry.
+   *
+   * When the provider never reported `expires_in`, the token is not assumed to
+   * be valid, but a token obtained within `unknownExpiryRefreshIntervalMs` is
+   * reused instead of re-requested, so an unreported lifetime cannot trigger a
+   * refresh on every call (which also breaks refresh-token rotation).
+   */
   async getValidAccessToken(leewaySeconds = DEFAULT_TOKEN_LEEWAY_SECONDS): Promise<string | null> {
     if (!Number.isFinite(leewaySeconds) || leewaySeconds < 0) {
       throw new AIDError('CONFIGURATION_ERROR', 'leewaySeconds must be a non-negative finite number');
     }
     const session = this.getSession();
     if (!session) return null;
-    if (!isTokenExpired(session.tokens, leewaySeconds)) return session.tokens.accessToken;
+    const needsRefresh = shouldRefreshToken(session.tokens, {
+      leewaySeconds,
+      unknownExpiryRefreshIntervalMs: this.config.unknownExpiryRefreshIntervalMs,
+    });
+    if (!needsRefresh) return session.tokens.accessToken;
     if (!session.tokens.refreshToken) { this.clearSession(); return null; }
     return (await this.refresh()).tokens.accessToken;
   }
 
   async signOut(options: { redirectTo?: string } = {}): Promise<void> {
     const session = this.getSession();
-    this.config.storage.remove(SESSION_KEY);
+    // clearSession() also advances the epoch, so a refresh already in flight
+    // cannot re-persist the session after logout.
+    this.clearSession();
     this.config.storage.remove(TRANSACTION_KEY);
     const safeRedirect = options.redirectTo
       ? validateRedirectTarget(options.redirectTo, this.config.redirectUri)
@@ -296,6 +346,7 @@ export class AID {
   private async performRefresh(): Promise<AIDSession> {
     const session = this.getSession();
     if (!session) throw new AIDAuthenticationError('No authenticated session exists');
+    const epoch = this.sessionEpoch;
     if (!session.tokens.refreshToken) {
       this.clearSession();
       throw new AIDAuthenticationError('The current session does not contain a refresh token');
@@ -334,6 +385,11 @@ export class AID {
     } else if (session.tokens.idToken) {
       tokens.idToken = session.tokens.idToken;
     }
+    // Logout (or a callback that replaced the session) wins over this refresh:
+    // never resurrect a session that was ended while the request was in flight.
+    if (this.sessionEpoch !== epoch) {
+      throw new AIDAuthenticationError('Session ended while the token refresh was in progress');
+    }
     const refreshedSession: AIDSession = { user, tokens, nonce: session.nonce };
     this.saveSession(refreshedSession);
     return refreshedSession;
@@ -344,7 +400,10 @@ export class AID {
     catch (err) { throw new AIDError('STORAGE_ERROR', 'Failed to persist session', err); }
   }
 
-  private clearSession(): void { this.config.storage.remove(SESSION_KEY); }
+  private clearSession(): void {
+    this.sessionEpoch += 1;
+    this.config.storage.remove(SESSION_KEY);
+  }
 
   private loadTransaction(): AuthTransaction | null {
     const raw = this.config.storage.get(TRANSACTION_KEY);
@@ -363,6 +422,15 @@ export class AID {
           (transaction.maxAgeSeconds !== undefined &&
             (typeof transaction.maxAgeSeconds !== 'number' || !Number.isSafeInteger(transaction.maxAgeSeconds) || transaction.maxAgeSeconds < 0))) {
         this.clearTransaction(); return null;
+      }
+      // Re-validate a persisted return target: a poisoned transaction must not
+      // become an open redirect handed back to the host application.
+      if (transaction.returnTo !== undefined) {
+        try {
+          normalizeReturnTo(transaction.returnTo, transaction.redirectUri);
+        } catch {
+          this.clearTransaction(); return null;
+        }
       }
       return transaction as unknown as AuthTransaction;
     } catch { this.clearTransaction(); return null; }
@@ -437,7 +505,17 @@ async function postFormJson(
 }
 
 async function readResponseJson(res: Response): Promise<Record<string, unknown>> {
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await readBoundedText(res, MAX_TOKEN_RESPONSE_BYTES);
+  } catch (err) {
+    if (err instanceof ResponseSizeError) {
+      throw new AIDTokenError(
+        `Token endpoint response exceeds the ${MAX_TOKEN_RESPONSE_BYTES}-byte limit`,
+      );
+    }
+    throw err;
+  }
   let value: unknown = {};
   if (text.trim()) {
     try { value = JSON.parse(text) as unknown; }
@@ -449,6 +527,48 @@ async function readResponseJson(res: Response): Promise<Record<string, unknown>>
     throw new AIDTokenError('Token endpoint response must be a JSON object');
   }
   return value as Record<string, unknown>;
+}
+
+/**
+ * Validate an application-supplied post-login target.
+ *
+ * The value is resolved against the registered redirect URI and must stay on
+ * that origin, so `returnTo` can never become an open redirect. Relative paths
+ * (`/dashboard`, `dashboard`) are supported and normalised to absolute URLs.
+ */
+function normalizeReturnTo(returnTo: unknown, redirectUri: string): string | undefined {
+  if (returnTo === undefined || returnTo === null) return undefined;
+  if (typeof returnTo !== 'string' || returnTo.trim().length === 0) {
+    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must be a non-empty string');
+  }
+  if (/[\u0000-\u001f\u007f]/.test(returnTo)) {
+    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must not contain control characters');
+  }
+
+  const callback = new URL(redirectUri);
+  let target: URL;
+  try {
+    target = new URL(returnTo, callback);
+  } catch (err) {
+    throw new AIDError(
+      'CONFIGURATION_ERROR',
+      'returnTo must be an absolute URL or a path within the application',
+      err,
+    );
+  }
+
+  if (target.origin !== callback.origin) {
+    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must share the registered redirect URI origin');
+  }
+  if (target.username || target.password) {
+    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must not contain credentials');
+  }
+  const isLocalHost = target.hostname === 'localhost' || target.hostname === '127.0.0.1';
+  if (target.protocol !== 'https:' && !(isLocalHost && target.protocol === 'http:')) {
+    throw new AIDError('CONFIGURATION_ERROR', 'returnTo must use HTTPS');
+  }
+
+  return target.toString();
 }
 
 function validateRedirectTarget(target: string, redirectUri: string): string {
@@ -487,6 +607,9 @@ function isValidSession(value: unknown): value is AIDSession {
   )) return false;
   if (tokens.expiresAt !== undefined && (
     typeof tokens.expiresAt !== 'number' || !Number.isFinite(tokens.expiresAt)
+  )) return false;
+  if (tokens.obtainedAt !== undefined && (
+    typeof tokens.obtainedAt !== 'number' || !Number.isFinite(tokens.obtainedAt)
   )) return false;
   if (tokens.refreshToken !== undefined && (
     typeof tokens.refreshToken !== 'string' || !tokens.refreshToken

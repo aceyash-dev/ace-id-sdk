@@ -42,6 +42,7 @@ export function normalizeTokens(raw: Record<string, unknown>): AIDTokens {
   const tokens: AIDTokens = {
     accessToken: raw.access_token,
     tokenType: typeof raw.token_type === 'string' ? raw.token_type : 'Bearer',
+    obtainedAt: Date.now(),
   };
   if (typeof raw.id_token === 'string') tokens.idToken = raw.id_token;
   if (typeof raw.refresh_token === 'string') tokens.refreshToken = raw.refresh_token;

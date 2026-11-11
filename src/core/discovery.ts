@@ -1,5 +1,10 @@
 import { AIDDiscoveryError } from './errors.js';
-import { withRequestTimeout } from './http.js';
+import {
+  DEFAULT_MAX_RESPONSE_BYTES,
+  ResponseSizeError,
+  readBoundedText,
+  withRequestTimeout,
+} from './http.js';
 
 export interface OIDCDiscoveryDocument {
   issuer: string;
@@ -52,6 +57,7 @@ export function normalizeIssuer(issuer: string): string {
 export async function fetchDiscovery(
   issuer: string,
   timeoutMs?: number,
+  maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
 ): Promise<OIDCDiscoveryDocument> {
   const normalized = normalizeIssuer(issuer);
   const url = `${normalized}/.well-known/openid-configuration`;
@@ -78,8 +84,17 @@ export async function fetchDiscovery(
 
     let doc: OIDCDiscoveryDocument;
     try {
-      doc = (await res.json()) as OIDCDiscoveryDocument;
+      // Bounded read: discovery documents are small, so an oversized body is
+      // either a misconfiguration or an attempt to exhaust client memory.
+      const text = await readBoundedText(res, maxResponseBytes);
+      doc = JSON.parse(text) as OIDCDiscoveryDocument;
     } catch (err) {
+      if (err instanceof ResponseSizeError) {
+        throw new AIDDiscoveryError(
+          `OIDC discovery document exceeds the ${maxResponseBytes}-byte limit`,
+          err,
+        );
+      }
       throw new AIDDiscoveryError('OIDC discovery document is not valid JSON', err);
     }
 
