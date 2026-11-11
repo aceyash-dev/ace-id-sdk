@@ -11,6 +11,8 @@ import {
   AIDTokenError,
 } from '../core/errors.js';
 import { withRequestTimeout, DEFAULT_REQUEST_TIMEOUT_MS } from '../core/http.js';
+import { resolveSigningAlgorithms, verifyIdToken, type VerifyIdTokenOptions } from '../core/jwt.js';
+import { createLogger, type AIDLogger } from '../core/logging.js';
 import type { AIDServerConfig, AIDTokens, AIDUser } from '../core/types.js';
 
 interface ResolvedServerConfig {
@@ -23,6 +25,7 @@ interface ResolvedServerConfig {
 
 export class AIDServer {
   private readonly config: ResolvedServerConfig;
+  private readonly logger: AIDLogger;
   private discoveryPromise?: Promise<OIDCDiscoveryDocument>;
 
   constructor(config: AIDServerConfig) {
@@ -43,6 +46,14 @@ export class AIDServer {
     if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
       throw new AIDError('CONFIGURATION_ERROR', 'requestTimeoutMs must be a positive finite number');
     }
+    const maxRetries = config.maxRetries ?? 2;
+    if (!Number.isSafeInteger(maxRetries) || maxRetries < 0 || maxRetries > 5) {
+      throw new AIDError('CONFIGURATION_ERROR', 'maxRetries must be an integer between 0 and 5');
+    }
+    this.logger = createLogger({
+      debug: config.debug === true,
+      ...(config.logger ? { logger: config.logger } : {}),
+    });
     this.config = {
       issuer: normalizeIssuer(config.issuer),
       clientId: config.clientId,
@@ -141,6 +152,104 @@ export class AIDServer {
       throw new AIDAuthenticationError('UserInfo response is missing "sub"');
     }
     return userFromClaims(payload);
+  }
+
+  /**
+   * Verify an ID token against the issuer's JWKS.
+   *
+   * Server-side flows must verify before trusting any claim; decoding a JWT is
+   * not verification. `nonce` is optional because a refresh response may omit it.
+   */
+  async verifyIdToken(
+    idToken: string,
+    opts: { nonce?: string; nonceRequired?: boolean; clockToleranceSeconds?: number } = {},
+  ): Promise<AIDUser> {
+    if (typeof idToken !== 'string' || !idToken) {
+      throw new AIDTokenError('An id_token is required for verification');
+    }
+    const discovery = await this.getDiscovery();
+    if (!discovery.jwks_uri) {
+      throw new AIDDiscoveryError('Discovery document is missing "jwks_uri" required to verify the ID token');
+    }
+    const options: VerifyIdTokenOptions = {
+      idToken,
+      jwksUri: discovery.jwks_uri,
+      issuer: discovery.issuer,
+      audience: this.config.clientId,
+      algorithms: resolveSigningAlgorithms(discovery.id_token_signing_alg_values_supported),
+      ...(opts.nonce !== undefined ? { nonce: opts.nonce } : {}),
+      ...(opts.nonceRequired !== undefined ? { nonceRequired: opts.nonceRequired } : {}),
+      ...(opts.clockToleranceSeconds !== undefined ? { clockToleranceSeconds: opts.clockToleranceSeconds } : {}),
+    };
+    const claims = await verifyIdToken(options);
+    return userFromClaims(claims as Record<string, unknown>);
+  }
+
+  /** Redeem a refresh token using the client's confidential credentials. */
+  async refresh(refreshToken: string, scope?: string): Promise<AIDTokens> {
+    if (typeof refreshToken !== 'string' || !refreshToken) {
+      throw new AIDError('CONFIGURATION_ERROR', 'refreshToken is required');
+    }
+    const discovery = await this.getDiscovery();
+    if (discovery.grant_types_supported && !discovery.grant_types_supported.includes('refresh_token')) {
+      throw new AIDAuthenticationError('The identity provider does not advertise refresh_token support');
+    }
+    const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken });
+    if (scope) body.set('scope', scope);
+    const basic = base64Basic(this.config.clientId, this.config.clientSecret);
+    const { response, payload } = await requestJson(
+      discovery.token_endpoint,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+          Authorization: `Basic ${basic}`,
+        },
+        body: body.toString(),
+      },
+      this.config.requestTimeoutMs,
+      'Token refresh request failed',
+    );
+    if (!response.ok) {
+      const code = typeof payload.error === 'string' ? payload.error : `HTTP ${response.status}`;
+      throw new AIDTokenError(
+        `Token endpoint error: ${code}`,
+        undefined,
+        typeof payload.error === 'string' ? payload.error : undefined,
+      );
+    }
+    try {
+      return normalizeTokens({ ...payload, refresh_token: payload.refresh_token ?? refreshToken });
+    } catch (err) {
+      throw new AIDTokenError('Invalid token response', err);
+    }
+  }
+
+  /** Build an authorization URL for a server-side flow that owns its own state and PKCE pair. */
+  async authorizationUrl(params: {
+    redirectUri: string;
+    state: string;
+    nonce?: string;
+    codeChallenge?: string;
+    extra?: Record<string, string>;
+  }): Promise<string> {
+    const discovery = await this.getDiscovery();
+    const url = new URL(discovery.authorization_endpoint);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', this.config.clientId);
+    url.searchParams.set('redirect_uri', params.redirectUri);
+    url.searchParams.set('scope', this.config.scope);
+    url.searchParams.set('state', params.state);
+    if (params.nonce) url.searchParams.set('nonce', params.nonce);
+    if (params.codeChallenge) {
+      url.searchParams.set('code_challenge', params.codeChallenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+    }
+    for (const [key, value] of Object.entries(params.extra ?? {})) {
+      url.searchParams.set(key, value);
+    }
+    return url.toString();
   }
 }
 
