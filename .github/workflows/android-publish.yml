@@ -1,0 +1,107 @@
+name: Android Maven Central
+
+# Builds, tests, signs and uploads cc.ace-base:ace-id-android to Sonatype Central Portal.
+# The upload is USER_MANAGED: review and press "Publish" in https://central.sonatype.com/publishing/deployments.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (must match package.json)"
+        required: true
+        default: "0.2.3"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+    environment: maven-central
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $VERSION" >&2; exit 1; }
+          PKG=$(node -p "require('./package.json').version")
+          [ "$VERSION" = "$PKG" ] || { echo "Version $VERSION does not match package.json ($PKG)" >&2; exit 1; }
+
+      - name: Check required secrets
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          for v in CENTRAL_USERNAME CENTRAL_PASSWORD SIGNING_KEY; do
+            [ -n "${!v}" ] || { echo "Missing secret: $v" >&2; exit 1; }
+          done
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6
+        with:
+          gradle-version: "9.6.0"
+
+      - name: Test and stage signed publication
+        working-directory: android
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gradle --no-daemon -PaceIdVersion="$VERSION" \
+            :library:test :library:publishReleasePublicationToCentralStagingRepository
+
+      - name: Validate and bundle
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          DIR="android/library/build/central-staging/cc/ace-base/ace-id-android/${VERSION}"
+          for ext in aar pom module; do
+            f="$DIR/ace-id-android-${VERSION}.${ext}"
+            [ -f "$f" ] || { echo "Missing $f" >&2; exit 1; }
+            [ -f "$f.asc" ] || { echo "Missing signature for $f" >&2; exit 1; }
+            [ -f "$f.sha1" ] && [ -f "$f.md5" ] || { echo "Missing checksums for $f" >&2; exit 1; }
+          done
+          for c in sources javadoc; do
+            [ -f "$DIR/ace-id-android-${VERSION}-${c}.jar" ] || { echo "Missing ${c} jar" >&2; exit 1; }
+          done
+          (cd android/library/build/central-staging && zip -r "$GITHUB_WORKSPACE/bundle.zip" cc)
+          unzip -l bundle.zip
+
+      - name: Upload to Central Portal
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)
+          ID=$(curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -F "bundle=@bundle.zip" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=ace-id-android-${VERSION}&publishingType=USER_MANAGED")
+          echo "Deployment ID: $ID"
+          echo "Review at https://central.sonatype.com/publishing/deployments" >> "$GITHUB_STEP_SUMMARY"

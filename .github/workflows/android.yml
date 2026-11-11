@@ -62,6 +62,10 @@ jobs:
         working-directory: android
         run: gradle --no-daemon test assemble
 
+      - name: Verify Maven publication (unsigned dry run)
+        working-directory: android
+        run: gradle --no-daemon :library:publishReleasePublicationToCentralStagingRepository
+
       - name: Prepare AAR and SHA-256 manifest
         if: ${{ github.event_name == 'workflow_dispatch' }}
         env:

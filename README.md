@@ -37,6 +37,16 @@ console.log(session.user);
 
 Use `ace-id-sdk/server` only in trusted server runtimes. The optional React adapter is available from `ace-id-sdk/react`. Never expose a client secret in browser or mobile code.
 
+## Android (Maven Central)
+
+Once `0.2.3` is published to Maven Central:
+
+```kotlin
+dependencies {
+    implementation("cc.ace-base:ace-id-android:0.2.3")
+}
+```
+
 ## Native SDKs
 
 - [Android SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-android)
