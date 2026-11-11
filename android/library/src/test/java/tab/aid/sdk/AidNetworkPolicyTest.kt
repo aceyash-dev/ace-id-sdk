@@ -47,7 +47,11 @@ class AidNetworkPolicyTest {
     @Test
     fun retryAfterIsParsedAndCapped() {
         val policy = AidNetworkPolicy(maxDelayMs = 2_000)
-        assertEquals(3_000L, policy.retryAfterMs("3") ?: -1L)
+        assertEquals(2_000L, policy.retryAfterMs("3") ?: -1L)
+
+        // A generous ceiling returns the provider's value unchanged.
+        val generous = AidNetworkPolicy(maxDelayMs = 10_000)
+        assertEquals(3_000L, generous.retryAfterMs("3") ?: -1L)
         assertEquals(2_000L, policy.retryAfterMs("120") ?: -1L)
         assertNull(policy.retryAfterMs(null))
         assertNull(policy.retryAfterMs(""))
