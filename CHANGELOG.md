@@ -72,8 +72,11 @@ correctly configured client.
 - `currentSession()`, `refreshSession()`, `logout()`, `getProfile()` and
   `hasPendingAuthorization()` for cross-platform API parity.
 - `unlockSession()` and `AidBiometricUnlock` — an optional biometric gate for a
-  locally stored session, using the platform `BiometricPrompt` (API 28+) with no
-  new dependency. It never replaces provider-side authentication or MFA.
+  locally stored session, built on `androidx.biometric` (the platform
+  `BiometricPrompt` is not usable from a library). Enrolment-aware
+  `isSupported()`, optional device-credential fallback, and it never replaces
+  provider-side authentication or MFA. This adds `androidx.biometric:biometric`
+  as an implementation dependency.
 
 ### Changed
 

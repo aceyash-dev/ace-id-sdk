@@ -120,9 +120,17 @@ if (AidBiometricUnlock.isSupported(context)) {
 ```
 
 This is a *local* convenience lock, not a second authentication factor: the
-provider still governs the session, MFA and token lifetimes. It uses the platform
-`BiometricPrompt` (API 28+), so it adds no dependency and no manifest entry. On
-older devices `isSupported()` returns false — fall back to a normal sign-in.
+provider still governs the session, MFA and token lifetimes. It is built on
+`androidx.biometric` (`BiometricPrompt`), which is the only supported entry point —
+the platform class has a package-private constructor and its `PromptInfo` builder
+is not public on every API level. `unlockSession()` therefore takes a
+`FragmentActivity`.
+
+`isSupported()` checks *enrolment*, not just hardware presence: a device with a
+sensor but no enrolled biometric cannot authenticate anyone. Pass
+`AidBiometricOptions(allowDeviceCredential = true)` to accept the device PIN as a
+fallback. On unsupported devices `isSupported()` returns false — fall back to a
+normal sign-in.
 
 ## Configuration validation
 

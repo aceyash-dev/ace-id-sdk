@@ -1,11 +1,11 @@
 package tab.aid.sdk
 
-import android.app.Activity
 import android.content.Context
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -408,7 +408,7 @@ class AceID @JvmOverloads constructor(
      * the device cannot show a prompt, or no session is stored.
      */
     suspend fun unlockSession(
-        activity: Activity,
+        activity: FragmentActivity,
         options: AidBiometricOptions = AidBiometricOptions(),
     ): AidSession? = withContext(Dispatchers.Main.immediate) {
         if (AidBiometricUnlock.unlock(activity, options).isSuccess) {

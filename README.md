@@ -124,7 +124,7 @@ aceID.authState.collect { state ->
 `login()` suspends until the callback returns, the transaction survives process
 death (`hasPendingAuthorization()`), refreshes are single-flight, and
 `AidNetworkPolicy` bounds timeouts and retries. Optional biometric session unlock
-uses the platform `BiometricPrompt` with no extra dependency. Full guide:
+is available through `androidx.biometric`. Full guide:
 [docs/ANDROID.md](docs/ANDROID.md).
 
 ## Native SDKs
