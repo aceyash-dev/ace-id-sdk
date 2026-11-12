@@ -9,8 +9,8 @@ JavaScript/TypeScript, Android, and iOS SDKs for authenticating users with Ace I
 
 | Platform | Version | Status |
 | --- | --- | --- |
-| JavaScript / TypeScript | `0.2.4` | Published on [npm](https://www.npmjs.com/package/ace-id-sdk) |
-| Android | `0.2.4` | Maven Central publication pending |
+| JavaScript / TypeScript | `0.2.3` on npm; `0.2.4` on `main` | [Latest published: 0.2.3](https://www.npmjs.com/package/ace-id-sdk). 0.2.4 is merged, not yet released |
+| Android | `0.2.4` | Maven Central publication pending (not yet installable) |
 | iOS (Swift Package) | `0.2.4` | Source only; no tagged release yet |
 
 ## JavaScript / TypeScript
