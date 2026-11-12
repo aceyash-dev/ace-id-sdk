@@ -123,7 +123,12 @@ export function parseCookies(header: string | null | undefined): Record<string, 
     const name = part.slice(0, index).trim();
     const value = part.slice(index + 1).trim();
     if (!name) continue;
-    out[name] = decodeURIComponent(value);
+    try {
+      out[name] = decodeURIComponent(value);
+    } catch {
+      // A malformed percent-encoding must never crash auth middleware; drop the cookie.
+      continue;
+    }
   }
   return out;
 }

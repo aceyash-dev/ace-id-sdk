@@ -1,5 +1,5 @@
 import { AIDAuthenticationError, AIDCallbackError, AIDError, AIDTokenError, aidErrorCode } from '../core/errors.js';
-import { normalizeReturnTo } from '../core/redirect.js';
+import { assertCallbackUrl, normalizeReturnTo } from '../core/redirect.js';
 import { createCodeChallenge, createCodeVerifier, randomString } from '../browser/pkce.js';
 import type { AIDUser } from '../core/types.js';
 import type { AIDServer } from './client.js';
@@ -159,6 +159,12 @@ export function createAuthHandlers(options: ServerAuthOptions): AuthHandlers {
     async callback(request) {
       const url = new URL(request.url);
       const clearStateCookie = clearCookie(stateCookieName);
+
+      try {
+        assertCallbackUrl(request.url, options.redirectUri);
+      } catch (err) {
+        return json({ error: 'CALLBACK_ERROR', message: err instanceof Error ? err.message : 'Invalid callback URL' }, 400, [clearStateCookie]);
+      }
 
       const providerError = url.searchParams.get('error');
       if (providerError) {

@@ -76,12 +76,12 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
   }, []);
 
   useEffect(() => {
-    if (!hydrateOnMount) return;
     // A single subscription keeps this provider in sync with every other
     // consumer of the same client, including a sign-out performed elsewhere.
     const unsubscribe = client.onAuthStateChange((next) => {
       if (!mounted.current) return;
       setAuthState(next);
+      if (next.status !== 'refresh-failed') setError(null);
       if (next.status === 'authenticated') {
         setSession(next.session);
         setStatus('authenticated');
@@ -99,7 +99,7 @@ export function AuthProvider({ client, children, hydrateOnMount = true }: AuthPr
       }
     });
     return unsubscribe;
-  }, [client, hydrateOnMount]);
+  }, [client]);
 
   const refreshSession = useCallback(() => {
     try {

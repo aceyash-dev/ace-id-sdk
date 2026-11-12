@@ -4,6 +4,17 @@ All notable changes to the Ace ID SDK are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+- Server: `authorizationUrl()` refuses `extra` parameters that would override protocol parameters (`state`, `nonce`, `redirect_uri`, `client_id`, `scope`, PKCE, `request`/`request_uri`).
+- Server: all discovery, token and UserInfo responses are size-bounded via the shared `readBoundedText`.
+- Server: the callback handler now applies the same validation as the browser (origin, path, duplicate `code`/`state`/`error`, embedded `redirect_uri`).
+- Server: malformed percent-encoded cookies are dropped instead of throwing.
+
+### Fixed
+- React: `hydrateOnMount={false}` no longer disables auth-state synchronization; stale errors clear on every non-failure transition.
+
 ## [0.2.4] — Reliability, session lifecycle and Android integration
 
 This release is about making existing authentication flows dependable: correct

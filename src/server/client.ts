@@ -10,7 +10,7 @@ import {
   AIDDiscoveryError,
   AIDTokenError,
 } from '../core/errors.js';
-import { withRequestTimeout, DEFAULT_REQUEST_TIMEOUT_MS } from '../core/http.js';
+import { withRequestTimeout, readBoundedText, DEFAULT_REQUEST_TIMEOUT_MS } from '../core/http.js';
 import { resolveSigningAlgorithms, verifyIdToken, type VerifyIdTokenOptions } from '../core/jwt.js';
 import { createLogger, type AIDLogger } from '../core/logging.js';
 import type { AIDServerConfig, AIDTokens, AIDUser } from '../core/types.js';
@@ -247,11 +247,20 @@ export class AIDServer {
       url.searchParams.set('code_challenge_method', 'S256');
     }
     for (const [key, value] of Object.entries(params.extra ?? {})) {
+      if (RESERVED_AUTHORIZATION_PARAMS.has(key.toLowerCase())) {
+        throw new TypeError(`Authorization parameter "${key}" is reserved and cannot be overridden`);
+      }
       url.searchParams.set(key, value);
     }
     return url.toString();
   }
 }
+
+/** Protocol parameters the SDK owns; extra parameters may never replace them. */
+const RESERVED_AUTHORIZATION_PARAMS: ReadonlySet<string> = new Set([
+  'response_type', 'client_id', 'redirect_uri', 'scope', 'state', 'nonce',
+  'code_challenge', 'code_challenge_method', 'request', 'request_uri',
+]);
 
 async function requestJson(
   url: string,
@@ -268,7 +277,7 @@ async function requestJson(
       cache: 'no-store',
     });
 
-    const text = await response.text();
+    const text = await readBoundedText(response);
     let value: unknown = {};
     if (text.trim()) {
       try {
