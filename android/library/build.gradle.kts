@@ -59,7 +59,7 @@ afterEvaluate {
                 pom {
                     name.set("Ace ID Android SDK")
                     description.set("Android SDK for authenticating users with Ace ID via OpenID Connect (Authorization Code + PKCE).")
-                    url.set("https://github.com/tab-gl/ace-id-sdk")
+                    url.set("https://github.com/tab-gl/aid-sdk")
                     inceptionYear.set("2026")
 
                     licenses {
@@ -77,13 +77,13 @@ afterEvaluate {
                         }
                     }
                     scm {
-                        url.set("https://github.com/tab-gl/ace-id-sdk")
-                        connection.set("scm:git:https://github.com/tab-gl/ace-id-sdk.git")
-                        developerConnection.set("scm:git:ssh://git@github.com/tab-gl/ace-id-sdk.git")
+                        url.set("https://github.com/tab-gl/aid-sdk")
+                        connection.set("scm:git:https://github.com/tab-gl/aid-sdk.git")
+                        developerConnection.set("scm:git:ssh://git@github.com/tab-gl/aid-sdk.git")
                     }
                     issueManagement {
                         system.set("GitHub Issues")
-                        url.set("https://github.com/tab-gl/ace-id-sdk/issues")
+                        url.set("https://github.com/tab-gl/aid-sdk/issues")
                     }
                 }
             }
