@@ -3,7 +3,7 @@
 JavaScript/TypeScript, Android, and iOS SDKs for authenticating users with Ace ID through OpenID Connect (OIDC) Authorization Code + PKCE.
 
 **Documentation:** [docs.ace-base.cc/projects/ace-id-sdk](https://docs.ace-base.cc/projects/ace-id-sdk)  
-**Source:** [aceyash-dev/ace-id-sdk](https://github.com/aceyash-dev/ace-id-sdk)
+**Source:** [tab-gl/ace-id-sdk](https://github.com/tab-gl/ace-id-sdk)
 
 ## Release status
 
