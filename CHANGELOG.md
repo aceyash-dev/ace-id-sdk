@@ -12,6 +12,9 @@ All notable changes to the Ace ID SDK are documented here. The format follows
 - Server: the callback handler now applies the same validation as the browser (origin, path, duplicate `code`/`state`/`error`, embedded `redirect_uri`).
 - Server: malformed percent-encoded cookies are dropped instead of throwing.
 
+### Release
+- npm publish job upgrades npm for trusted publishing, skips an already-published version, emits provenance, accepts an optional `NPM_TOKEN` fallback and explains 404 failures.
+
 ### Fixed
 - React: `hydrateOnMount={false}` no longer disables auth-state synchronization; stale errors clear on every non-failure transition.
 

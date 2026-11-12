@@ -221,8 +221,40 @@ jobs:
           set -euo pipefail
           node -e "const p=require('./package.json'); if (p.name !== 'ace-id-sdk' || p.version !== '0.2.4' || p.repository.url !== 'https://github.com/tab-gl/aid-sdk.git') throw new Error('Unexpected npm package identity, version, or repository')"
           npm ci
+      - name: Use an npm version that supports trusted publishing
+        run: |
+          set -euo pipefail
+          npm install -g npm@^11.5.1
+          npm --version
+      - name: Check whether this version is already published
+        id: published
+        run: |
+          set -euo pipefail
+          if v=$(npm view "ace-id-sdk@0.2.4" version 2>/dev/null) && [ "$v" = "0.2.4" ]; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::ace-id-sdk@0.2.4 is already on npm; skipping publish."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Current dist-tags:"; npm view ace-id-sdk dist-tags --json || true
       - name: Publish public npm package
-        run: npm publish --access public
+        if: ${{ steps.published.outputs.already != 'true' }}
+        env:
+          # Optional fallback: a granular npm token with write access to ace-id-sdk.
+          # When the secret is unset, npm uses OIDC trusted publishing.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -n "${NPM_TOKEN:-}" ]; then
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+            echo "Publishing with NPM_TOKEN."
+          else
+            echo "Publishing with OIDC trusted publishing."
+          fi
+          if ! npm publish --access public --provenance; then
+            echo "::error::npm publish failed. A 404 here means npm did not authorize this run: on npmjs.com, ace-id-sdk > Settings > Trusted Publisher must be tab-gl/aid-sdk + release.yml (blank environment) and the publishing account must be a maintainer; or add an NPM_TOKEN secret."
+            exit 1
+          fi
 
   publish-github-release:
     name: Publish validated GitHub Release
