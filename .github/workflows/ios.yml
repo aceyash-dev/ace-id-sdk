@@ -9,7 +9,7 @@ on:
       - '.github/workflows/ios.yml'
   push:
     branches: [main]
-    tags: ['0.2.3']
+    tags: ['0.2.4']
     paths:
       - 'Sources/**'
       - 'Tests/**'
@@ -20,7 +20,7 @@ on:
       release_tag:
         description: "Swift Package semantic version to validate"
         required: true
-        default: "0.2.3"
+        default: "0.2.4"
 
 permissions:
   contents: read
@@ -46,8 +46,8 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           set -euo pipefail
-          test "$RELEASE_TAG" = "0.2.3" || {
-            echo "This validation workflow is scoped to version 0.2.3; received: $RELEASE_TAG" >&2
+          test "$RELEASE_TAG" = "0.2.4" || {
+            echo "This validation workflow is scoped to version 0.2.4; received: $RELEASE_TAG" >&2
             exit 1
           }
           test -f Package.swift

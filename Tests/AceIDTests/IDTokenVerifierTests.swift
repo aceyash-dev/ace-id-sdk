@@ -3,6 +3,15 @@ import XCTest
 @testable import AceID
 
 final class IDTokenVerifierTests: XCTestCase {
+    /// Generous expectation timeout.
+    ///
+    /// Verification runs real RSA/EC signature checks, which on a loaded CI
+    /// simulator can take longer than the one or two seconds these tests used to
+    /// allow — the suite then failed intermittently with "Asynchronous wait
+    /// failed" rather than a genuine verification error. Ten seconds keeps a real
+    /// regression visible while removing the timing flake.
+    private let verificationTimeout: TimeInterval = 10
+
     func testMaxAgeRequiresRecentAuthenticationTime() {
         let now: TimeInterval = 1_000_000
         XCTAssertTrue(AceIDIDTokenVerifier.isAuthenticationTimeValid(
@@ -32,7 +41,7 @@ final class IDTokenVerifierTests: XCTestCase {
             }
             finished.fulfill()
         }
-        wait(for: [finished], timeout: 1)
+        wait(for: [finished], timeout: verificationTimeout)
     }
 
     func testRejectsOversizedTokenWithoutNetworkRequest() {
@@ -48,7 +57,7 @@ final class IDTokenVerifierTests: XCTestCase {
             }
             finished.fulfill()
         }
-        wait(for: [finished], timeout: 1)
+        wait(for: [finished], timeout: verificationTimeout)
     }
 
     func testRejectsUnsignedToken() {
@@ -66,7 +75,7 @@ final class IDTokenVerifierTests: XCTestCase {
             }
             finished.fulfill()
         }
-        wait(for: [finished], timeout: 1)
+        wait(for: [finished], timeout: verificationTimeout)
     }
 
     func testAcceptsValidRS256TokenAndRejectsTampering() {
@@ -90,7 +99,7 @@ final class IDTokenVerifierTests: XCTestCase {
             }
             success.fulfill()
         }
-        wait(for: [success], timeout: 2)
+        wait(for: [success], timeout: verificationTimeout)
 
         let signatureStart = validToken.lastIndex(of: ".")!
         let signatureCharacter = validToken.index(after: signatureStart)
@@ -112,7 +121,7 @@ final class IDTokenVerifierTests: XCTestCase {
             }
             failure.fulfill()
         }
-        wait(for: [failure], timeout: 2)
+        wait(for: [failure], timeout: verificationTimeout)
     }
 
     func testAcceptsValidES256Token() {
@@ -133,7 +142,7 @@ final class IDTokenVerifierTests: XCTestCase {
             }
             finished.fulfill()
         }
-        wait(for: [finished], timeout: 2)
+        wait(for: [finished], timeout: verificationTimeout)
     }
 
     private func makeSession(metadata: String, jwks: String) -> URLSession {

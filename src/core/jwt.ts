@@ -1,5 +1,32 @@
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { jwtVerify, type JWTPayload } from 'jose';
+import type { OIDCDiscoveryDocument } from './discovery.js';
 import { AIDTokenError } from './errors.js';
+import { clearJwksCache, jwksFor } from './jwks.js';
+
+export { clearJwksCache, jwksCacheSize, jwksFor } from './jwks.js';
+
+/**
+ * Signing algorithms the SDK will accept when the caller does not narrow them.
+ *
+ * This is an allowlist of asymmetric algorithms only. `none` is never accepted,
+ * and HMAC algorithms (HS*) are refused because a client secret must never be
+ * used as a signing key: a token signed with a shared secret proves nothing
+ * about the issuer.
+ */
+export const DEFAULT_ALLOWED_SIGNING_ALGORITHMS: readonly string[] = [
+  'RS256',
+  'RS384',
+  'RS512',
+  'PS256',
+  'PS384',
+  'PS512',
+  'ES256',
+  'ES384',
+  'ES512',
+  'EdDSA',
+];
+
+const ASYMMETRIC_ALGORITHM = /^(RS|PS|ES)\d{3}$|^EdDSA$/;
 
 export interface VerifyIdTokenOptions {
   idToken: string;
@@ -17,52 +44,49 @@ export interface VerifyIdTokenOptions {
   clockToleranceSeconds?: number;
   /** Requested OIDC max_age in seconds; requires a recent auth_time claim. */
   maxAgeSeconds?: number;
+  /** Signing algorithms accepted for this token. Defaults to the asymmetric allowlist. */
+  algorithms?: readonly string[];
+}
+
+export interface VerifyIdTokenWithDiscoveryOptions
+  extends Omit<VerifyIdTokenOptions, 'jwksUri' | 'issuer' | 'algorithms'> {
+  discovery: OIDCDiscoveryDocument;
+  /** Extra algorithms to intersect with the provider metadata. */
+  algorithms?: readonly string[];
 }
 
 /**
- * Bounded, issuer-keyed cache of remote JWK sets.
+ * Resolve the algorithms to accept from provider metadata and an allowlist.
  *
- * `jose` caches fetched keys per `createRemoteJWKSet` instance and applies its
- * own cooldown plus refetch-on-unknown-`kid` behaviour, so reusing the instance
- * per JWKS URI is sufficient: keys stay cached, rotation still works, and
- * verification no longer costs a JWKS round trip on every call.
+ * Provider metadata narrows the allowlist; it can never widen it. A provider
+ * that advertises only an algorithm this SDK refuses is a configuration error,
+ * not a silent downgrade, so the intersection is checked for emptiness.
  */
-const jwksSets = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-const MAX_CACHED_JWKS_SETS = 16;
-
-/**
- * How long `jose` waits before re-fetching a key set after an unknown `kid`.
- *
- * The library default is 30s, which delays picking up a rotated signing key by
- * up to half a minute. 5s keeps rotation responsive while still collapsing a
- * burst of unknown-kid failures into a single refetch.
- */
-const JWKS_COOLDOWN_MS = 5_000;
-
-/** Return the cached remote JWK set for `jwksUri`, creating it on first use. */
-export function jwksFor(jwksUri: string): ReturnType<typeof createRemoteJWKSet> {
-  const cached = jwksSets.get(jwksUri);
-  if (cached) return cached;
-
-  const created = createRemoteJWKSet(new URL(jwksUri), {
-    cooldownDuration: JWKS_COOLDOWN_MS,
-  });
-  if (jwksSets.size >= MAX_CACHED_JWKS_SETS) {
-    // Evict the oldest entry; issuers per process are few, so this is a guard
-    // against unbounded growth rather than a hot path.
-    const oldest = jwksSets.keys().next();
-    if (!oldest.done) jwksSets.delete(oldest.value);
+export function resolveSigningAlgorithms(
+  advertised: unknown,
+  allowed: readonly string[] = DEFAULT_ALLOWED_SIGNING_ALGORITHMS,
+): string[] {
+  const allowlist = allowed.filter((algorithm) => ASYMMETRIC_ALGORITHM.test(algorithm));
+  if (allowlist.length === 0) {
+    throw new AIDTokenError(
+      'No acceptable ID token signing algorithm is configured; only asymmetric algorithms are supported',
+    );
   }
-  jwksSets.set(jwksUri, created);
-  return created;
-}
+  if (!Array.isArray(advertised) || advertised.length === 0) return allowlist;
 
-/** Drop all cached remote JWK sets (tests, or after an operator-driven key reset). */
-export function clearJwksCache(): void {
-  jwksSets.clear();
+  const intersection = advertised.filter(
+    (algorithm): algorithm is string => typeof algorithm === 'string' && allowlist.includes(algorithm),
+  );
+  if (intersection.length === 0) {
+    throw new AIDTokenError(
+      'The identity provider does not advertise an ID token signing algorithm this SDK accepts',
+    );
+  }
+  return intersection;
 }
 
 export async function verifyIdToken(opts: VerifyIdTokenOptions): Promise<JWTPayload> {
+  const algorithms = opts.algorithms ?? DEFAULT_ALLOWED_SIGNING_ALGORITHMS;
   let payload: JWTPayload;
   try {
     const jwks = jwksFor(opts.jwksUri);
@@ -70,14 +94,39 @@ export async function verifyIdToken(opts: VerifyIdTokenOptions): Promise<JWTPayl
       issuer: opts.issuer,
       audience: opts.audience,
       clockTolerance: opts.clockToleranceSeconds ?? 60,
+      algorithms: [...algorithms],
     });
     payload = verified;
   } catch (err) {
-    throw new AIDTokenError('ID token verification failed', err);
+    throw new AIDTokenError('ID token verification failed', err, undefined, {
+      retryable: isKeyFetchFailure(err),
+    });
   }
 
   validateVerifiedIdTokenClaims(payload, opts);
   return payload;
+}
+
+/**
+ * Verify an ID token using endpoints and algorithms from a discovery document.
+ *
+ * Keeping this in one place means every entry point (browser, server, refresh)
+ * applies the same issuer, JWKS and algorithm policy instead of each one
+ * re-deriving it.
+ */
+export async function verifyIdTokenWithDiscovery(
+  opts: VerifyIdTokenWithDiscoveryOptions,
+): Promise<JWTPayload> {
+  const { discovery, algorithms, ...rest } = opts;
+  if (!discovery.jwks_uri) {
+    throw new AIDTokenError('Discovery document is missing "jwks_uri" required to verify the ID token');
+  }
+  return verifyIdToken({
+    ...rest,
+    jwksUri: discovery.jwks_uri,
+    issuer: discovery.issuer,
+    algorithms: resolveSigningAlgorithms(discovery.id_token_signing_alg_values_supported, algorithms),
+  });
 }
 
 export function validateVerifiedIdTokenClaims(
@@ -127,4 +176,13 @@ export function validateVerifiedIdTokenClaims(
       throw new AIDTokenError('ID token nonce mismatch');
     }
   }
+}
+
+/** True when a verification failure looks like a key-fetch problem worth retrying. */
+function isKeyFetchFailure(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  if (typeof code === 'string') {
+    return code === 'ERR_JWKS_TIMEOUT' || code === 'ERR_JWKS_INVALID' || code === 'ERR_JOSE_GENERIC';
+  }
+  return false;
 }

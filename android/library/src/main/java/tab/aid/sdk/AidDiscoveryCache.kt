@@ -10,6 +10,7 @@ internal class AidDiscoveryCache(
     private val issuer: String,
     private val clientId: String,
     private val ttlMs: Long,
+    private val policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
 ) {
     companion object {
         private const val KEY = "discovery"
@@ -45,7 +46,7 @@ internal class AidDiscoveryCache(
                 return disk.configuration
             }
 
-            val configuration = OidcDiscovery.fetch(normalizedIssuer)
+            val configuration = OidcDiscovery.fetch(normalizedIssuer, policy)
             val entry = Entry(configuration, System.currentTimeMillis() + ttlMs.coerceAtLeast(1L))
             memory[memoryKey] = entry
             writeDisk(entry)

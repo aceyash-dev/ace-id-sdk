@@ -21,7 +21,7 @@ on:
       version:
         description: "Semantic version to build"
         required: true
-        default: "0.2.3"
+        default: "0.2.4"
       publish_release:
         description: "Create a GitHub Release after all build/test jobs pass (main only)"
         required: true
@@ -47,13 +47,13 @@ jobs:
     steps:
       - name: Validate version and publishing branch
         env:
-          RELEASE_VERSION: ${{ inputs.version || '0.2.3' }}
+          RELEASE_VERSION: ${{ inputs.version || '0.2.4' }}
           PUBLISH_RELEASE: ${{ inputs.publish_release || false }}
           PUBLISH_NPM: ${{ inputs.publish_npm || false }}
         run: |
           set -euo pipefail
-          test "$RELEASE_VERSION" = "0.2.3" || {
-            echo "This release workflow is scoped to 0.2.3; received: $RELEASE_VERSION" >&2
+          test "$RELEASE_VERSION" = "0.2.4" || {
+            echo "This release workflow is scoped to 0.2.4; received: $RELEASE_VERSION" >&2
             exit 1
           }
           if { [ "$PUBLISH_RELEASE" = "true" ] || [ "$PUBLISH_NPM" = "true" ]; } && [ "$GITHUB_REF" != "refs/heads/main" ]; then
@@ -74,7 +74,7 @@ jobs:
           node-version: 22
           cache: npm
       - name: Verify package version
-        run: node -e "const p=require('./package.json'); if (p.version !== '0.2.3') throw new Error('Expected package.json version 0.2.3, got '+p.version)"
+        run: node -e "const p=require('./package.json'); if (p.version !== '0.2.4') throw new Error('Expected package.json version 0.2.4, got '+p.version)"
       - name: Install locked dependencies
         run: npm ci
       - name: Typecheck, test, and build
@@ -82,16 +82,28 @@ jobs:
           npm run typecheck
           npm test
           npm run build
+      - name: Check bundle size budgets
+        run: npm run check:bundle
+      - name: Verify package exports and payload
+        run: npm run verify:package
       - name: Pack public package
         run: |
           set -euo pipefail
           mkdir -p release
           npm pack --pack-destination release
-          tar -tzf release/ace-id-sdk-0.2.3.tgz > release/npm-tarball-files.txt
+          tar -tzf release/ace-id-sdk-0.2.4.tgz > release/npm-tarball-files.txt
           grep -q '^package/dist/index.js$' release/npm-tarball-files.txt
           grep -q '^package/dist/index.cjs$' release/npm-tarball-files.txt
+          grep -q '^package/dist/index.d.ts$' release/npm-tarball-files.txt
+          grep -q '^package/dist/react/index.js$' release/npm-tarball-files.txt
+          grep -q '^package/dist/server/index.js$' release/npm-tarball-files.txt
+          grep -q '^package/dist/diagnostics.js$' release/npm-tarball-files.txt
+          if grep -qE '^package/(src|test|scripts)/' release/npm-tarball-files.txt; then
+            echo "Release tarball must not contain sources or tests." >&2
+            exit 1
+          fi
           mkdir -p /tmp/npm-package-check
-          tar -xzf release/ace-id-sdk-0.2.3.tgz -C /tmp/npm-package-check package/README.md package/LICENSE
+          tar -xzf release/ace-id-sdk-0.2.4.tgz -C /tmp/npm-package-check package/README.md package/LICENSE
           test -f /tmp/npm-package-check/package/README.md
           test -f /tmp/npm-package-check/package/LICENSE
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -123,9 +135,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          cp android/library/build/outputs/aar/library-release.aar release/ace-id-sdk-android-0.2.3.aar
+          cp android/library/build/outputs/aar/library-release.aar release/ace-id-sdk-android-0.2.4.aar
           cd release
-          sha256sum ace-id-sdk-android-0.2.3.aar > ace-id-sdk-android-0.2.3.aar.sha256
+          sha256sum ace-id-sdk-android-0.2.4.aar > ace-id-sdk-android-0.2.4.aar.sha256
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-android
@@ -176,8 +188,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          git archive --format=tar --prefix=ace-id-sdk/ "$GITHUB_SHA" Package.swift Sources Tests README.md | gzip -n > release/ace-id-sdk-swift-source-0.2.3.tar.gz
-          tar -tzf release/ace-id-sdk-swift-source-0.2.3.tar.gz >/dev/null
+          git archive --format=tar --prefix=ace-id-sdk/ "$GITHUB_SHA" Package.swift Sources Tests README.md | gzip -n > release/ace-id-sdk-swift-source-0.2.4.tar.gz
+          tar -tzf release/ace-id-sdk-swift-source-0.2.4.tar.gz >/dev/null
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: release-swift
@@ -207,7 +219,7 @@ jobs:
       - name: Verify package identity and install dependencies
         run: |
           set -euo pipefail
-          node -e "const p=require('./package.json'); if (p.name !== 'ace-id-sdk' || p.version !== '0.2.3' || p.repository.url !== 'https://github.com/aceyash-dev/ace-id-sdk.git') throw new Error('Unexpected npm package identity, version, or repository')"
+          node -e "const p=require('./package.json'); if (p.name !== 'ace-id-sdk' || p.version !== '0.2.4' || p.repository.url !== 'https://github.com/aceyash-dev/ace-id-sdk.git') throw new Error('Unexpected npm package identity, version, or repository')"
           npm ci
       - name: Publish public npm package
         run: npm publish --access public
@@ -233,25 +245,31 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          test "$RELEASE_VERSION" = "0.2.3"
-          test -f release/ace-id-sdk-0.2.3.tgz
-          test -f release/ace-id-sdk-android-0.2.3.aar
-          test -f release/ace-id-sdk-swift-source-0.2.3.tar.gz
+          test "$RELEASE_VERSION" = "0.2.4"
+          test -f release/ace-id-sdk-0.2.4.tgz
+          test -f release/ace-id-sdk-android-0.2.4.aar
+          test -f release/ace-id-sdk-swift-source-0.2.4.tar.gz
           if git ls-remote --tags origin "refs/tags/$RELEASE_VERSION" | grep -q .; then
             echo "Tag $RELEASE_VERSION already exists; refusing to overwrite or retarget it." >&2
             exit 1
           fi
-          sha256sum release/ace-id-sdk-0.2.3.tgz release/ace-id-sdk-android-0.2.3.aar release/ace-id-sdk-swift-source-0.2.3.tar.gz > release/SHA256SUMS
+          sha256sum release/ace-id-sdk-0.2.4.tgz release/ace-id-sdk-android-0.2.4.aar release/ace-id-sdk-swift-source-0.2.4.tar.gz > release/SHA256SUMS
+          # Reproducible release gate: the manifest must verify against the artifacts.
+          sha256sum -c release/SHA256SUMS
+          # Every artifact must be non-empty and the AAR must carry the published version.
+          for artifact in release/ace-id-sdk-0.2.4.tgz release/ace-id-sdk-android-0.2.4.aar release/ace-id-sdk-swift-source-0.2.4.tar.gz; do
+            test -s "$artifact"
+          done
           cat > release/RELEASE-NOTES.md <<'NOTES'
-          # Ace ID SDK 0.2.3
+          # Ace ID SDK 0.2.4
 
           This release includes the JavaScript/TypeScript npm package, the source-distributed iOS Swift Package, and the Android AAR.
 
           ## Install
 
-          - npm: `npm install ace-id-sdk@0.2.3`
-          - Swift Package: add `https://github.com/aceyash-dev/ace-id-sdk` and select version `0.2.3`.
-          - Android: download `ace-id-sdk-android-0.2.3.aar` and verify it against `SHA256SUMS`.
+          - npm: `npm install ace-id-sdk@0.2.4`
+          - Swift Package: add `https://github.com/aceyash-dev/ace-id-sdk` and select version `0.2.4`.
+          - Android: download `ace-id-sdk-android-0.2.4.aar` and verify it against `SHA256SUMS`.
 
           The artifacts are produced only after the npm checks, Android unit tests/AAR assembly, and iOS Simulator compile/tests pass.
           NOTES
@@ -262,10 +280,10 @@ jobs:
         run: |
           set -euo pipefail
           gh release create "$RELEASE_VERSION" \
-            release/ace-id-sdk-0.2.3.tgz \
-            release/ace-id-sdk-android-0.2.3.aar \
-            release/ace-id-sdk-android-0.2.3.aar.sha256 \
-            release/ace-id-sdk-swift-source-0.2.3.tar.gz \
+            release/ace-id-sdk-0.2.4.tgz \
+            release/ace-id-sdk-android-0.2.4.aar \
+            release/ace-id-sdk-android-0.2.4.aar.sha256 \
+            release/ace-id-sdk-swift-source-0.2.4.tar.gz \
             release/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \

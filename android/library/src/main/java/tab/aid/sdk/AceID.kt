@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -35,6 +36,8 @@ class AceID @JvmOverloads constructor(
     val discoveryCacheTtlMs: Long = DEFAULT_DISCOVERY_CACHE_TTL_MS,
     val accountCacheTtlMs: Long = DEFAULT_ACCOUNT_CACHE_TTL_MS,
     val tokenLeewaySeconds: Long = DEFAULT_TOKEN_LEEWAY_SECONDS,
+    /** Timeouts and retry budget for every network call. */
+    val networkPolicy: AidNetworkPolicy = AidNetworkPolicy.standard(),
 ) {
     private val normalizedIssuer: String = OidcDiscovery.normalizeIssuer(issuer)
     private val refreshMutex = Mutex()
@@ -66,13 +69,14 @@ class AceID @JvmOverloads constructor(
     fun discover(): OidcConfiguration {
         val now = System.currentTimeMillis()
         memoryDiscovery?.takeIf { it.second > now }?.let { return it.first }
-        val configuration = OidcDiscovery.fetch(normalizedIssuer)
+        val configuration = OidcDiscovery.fetch(normalizedIssuer, networkPolicy)
         memoryDiscovery = configuration to (now + discoveryCacheTtlMs)
         return configuration
     }
 
     fun discover(context: Context, forceRefresh: Boolean = false): OidcConfiguration =
-        AidDiscoveryCache(context, normalizedIssuer, clientId, discoveryCacheTtlMs).get(forceRefresh)
+        AidDiscoveryCache(context, normalizedIssuer, clientId, discoveryCacheTtlMs, networkPolicy)
+            .get(forceRefresh)
 
     @JvmOverloads
     fun createAuthorizationRequest(configuration: OidcConfiguration, options: AidAuthorizationOptions = AidAuthorizationOptions()): AuthorizationRequest {
@@ -260,6 +264,7 @@ class AceID @JvmOverloads constructor(
                 code = code,
                 redirectUri = transaction.redirectUri,
                 codeVerifier = transaction.codeVerifier,
+                policy = networkPolicy,
             )
 
             val idToken = tokens.idToken
@@ -271,6 +276,7 @@ class AceID @JvmOverloads constructor(
                 clientId = clientId,
                 nonce = transaction.nonce,
                 maxAgeSeconds = transaction.maxAgeSeconds,
+                policy = networkPolicy,
             )
 
             val session = AidSession(tokens = tokens, user = user)
@@ -336,22 +342,86 @@ class AceID @JvmOverloads constructor(
         // All sync and suspend entry points share this lock so a rotating refresh
         // token cannot be submitted concurrently by two callers.
         try {
-            refreshSession(context, session, store, storage).tokens.accessToken
+            performRefresh(context, session, store).tokens.accessToken
         } catch (error: AidTokenEndpointException) {
             if (error.errorCode == "invalid_grant") {
                 store.clear()
                 accountState.value = null
                 sessionStateFlow.value = AidSessionState.Unauthenticated
+            } else {
+                // The provider failed transiently: keep the session and let the
+                // application decide whether to retry or ask the user to sign in.
+                sessionStateFlow.value = AidSessionState.RefreshFailed(error)
             }
+            throw error
+        } catch (error: Exception) {
+            sessionStateFlow.value = AidSessionState.RefreshFailed(error)
             throw error
         }
     }
 
-    private fun refreshSession(
+    /** Alias of [getSession] matching the cross-platform API name. */
+    fun currentSession(context: Context): AidSession? = getSession(context)
+
+    /**
+     * Refresh the current session explicitly.
+     *
+     * Concurrent callers share the SDK's refresh lock, so a rotating refresh token
+     * is never submitted twice.
+     */
+    @Throws(AidException::class)
+    suspend fun refreshSession(context: Context): AidSession = withContext(Dispatchers.IO) {
+        refreshMutex.withLock {
+            synchronized(refreshLock) {
+                val storage = AidSecureStorage(context, normalizedIssuer, clientId)
+                val store = AidSessionStore(storage)
+                val session = store.get()
+                    ?: throw AidException("No authenticated Ace ID session")
+                try {
+                    performRefresh(context, session, store)
+                } catch (error: AidTokenEndpointException) {
+                    if (error.errorCode == "invalid_grant") {
+                        store.clear()
+                        accountState.value = null
+                        sessionStateFlow.value = AidSessionState.Unauthenticated
+                    } else {
+                        sessionStateFlow.value = AidSessionState.RefreshFailed(error)
+                    }
+                    throw error
+                } catch (error: Exception) {
+                    sessionStateFlow.value = AidSessionState.RefreshFailed(error)
+                    throw error
+                }
+            }
+        }
+    }
+
+    /** Profile retrieval, named for cross-platform parity with the JS SDK. */
+    suspend fun getProfile(context: Context, cache: Boolean = true): AidUser? =
+        getAccount(context, cache)
+
+    /**
+     * Unlock a locally stored session behind the device biometric prompt.
+     *
+     * The biometric check gates *local* access only; it does not re-authenticate
+     * the user with the identity provider. Returns null when the user cancels,
+     * the device cannot show a prompt, or no session is stored.
+     */
+    suspend fun unlockSession(
+        activity: FragmentActivity,
+        options: AidBiometricOptions = AidBiometricOptions(),
+    ): AidSession? = withContext(Dispatchers.Main.immediate) {
+        if (AidBiometricUnlock.unlock(activity, options).isSuccess) {
+            getSession(activity.applicationContext)
+        } else {
+            null
+        }
+    }
+
+    private fun performRefresh(
         context: Context,
         session: AidSession,
         store: AidSessionStore,
-        storage: AidSecureStorage,
     ): AidSession {
         val refreshToken = session.tokens.refreshToken
             ?: throw AidException("Access token has expired and no refresh token is available")
@@ -368,11 +438,14 @@ class AceID @JvmOverloads constructor(
             clientId = clientId,
             refreshToken = refreshToken,
             scope = session.tokens.scope ?: scope,
+            policy = networkPolicy,
         )
 
         var user = session.user
         refreshed.idToken?.let { token ->
-            val refreshedUser = AidJwtVerifier.verify(token, configuration, clientId)
+            val refreshedUser = AidJwtVerifier.verify(
+                token, configuration, clientId, policy = networkPolicy,
+            )
             if (refreshedUser.subject != session.user.subject) {
                 throw AidException("Refreshed ID token subject does not match the current session")
             }
@@ -418,7 +491,7 @@ class AceID @JvmOverloads constructor(
                 }
             }
 
-            val account = AidAccountClient.fetch(discover(context), token)
+            val account = AidAccountClient.fetch(discover(context), token, networkPolicy)
             if (account.subject != session.user.subject) {
                 throw AidException("UserInfo subject does not match the current session")
             }
@@ -454,6 +527,16 @@ class AceID @JvmOverloads constructor(
         withContext(Dispatchers.IO) {
             val checks = mutableListOf<AidConfigurationCheck>()
             checks += AidConfigurationCheck("HTTPS issuer", issuer.startsWith("https://") || isLocalhostIssuer(), issuer)
+            checks += AidConfigurationCheck(
+                "Network timeouts",
+                networkPolicy.connectTimeoutMs > 0 && networkPolicy.readTimeoutMs > 0,
+                "connect=" + networkPolicy.connectTimeoutMs + "ms read=" + networkPolicy.readTimeoutMs + "ms",
+            )
+            checks += AidConfigurationCheck(
+                "Retry budget",
+                networkPolicy.maxRetries in 0..5,
+                "retries=" + networkPolicy.maxRetries,
+            )
             checks += AidConfigurationCheck("Redirect URI", runCatching { validateRedirectUri(redirectUri); true }.getOrDefault(false), redirectUri)
             val discovery = runCatching { discoverWithoutContext() }
             discovery.fold(
@@ -473,6 +556,29 @@ class AceID @JvmOverloads constructor(
         }
 
     private fun discoverWithoutContext(): OidcConfiguration = discover()
+
+    /** Alias of [signOut] matching the cross-platform API name. */
+    fun logout(context: Context) = signOut(context)
+
+    /**
+     * Whether an authorization transaction is waiting for its callback.
+     *
+     * The transaction is persisted in encrypted storage, so it survives activity
+     * recreation and process death: an application can call this from `onCreate`
+     * and route to `handleCallback` instead of restarting the flow.
+     */
+    fun hasPendingAuthorization(context: Context): Boolean {
+        val raw = runCatching {
+            AidSecureStorage(context, normalizedIssuer, clientId).get("transaction")
+        }.getOrNull() ?: return false
+        val transaction = runCatching { AidTransaction.fromJson(raw) }.getOrNull() ?: return false
+        return transaction.hasValidTimestamp()
+    }
+
+    /** Abandon a login that the user walked away from. */
+    fun cancelLogin() {
+        activeLoginCallback = null
+    }
 
     fun signOut(context: Context) {
         val storage = AidSecureStorage(context, normalizedIssuer, clientId)

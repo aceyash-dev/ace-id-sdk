@@ -1,8 +1,6 @@
 package tab.aid.sdk
 
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URLEncoder
 
 internal object AidTokenClient {
@@ -12,6 +10,7 @@ internal object AidTokenClient {
         code: String,
         redirectUri: String,
         codeVerifier: String,
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
     ): AidTokens {
         val body = form(
             "grant_type" to "authorization_code",
@@ -20,7 +19,7 @@ internal object AidTokenClient {
             "client_id" to clientId,
             "code_verifier" to codeVerifier,
         )
-        return post(configuration.tokenEndpoint, body)
+        return post(configuration.tokenEndpoint, body, policy)
     }
 
     fun refresh(
@@ -28,6 +27,7 @@ internal object AidTokenClient {
         clientId: String,
         refreshToken: String,
         scope: String?,
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
     ): AidTokens {
         val fields = mutableListOf(
             "grant_type" to "refresh_token",
@@ -35,56 +35,43 @@ internal object AidTokenClient {
             "client_id" to clientId,
         )
         if (!scope.isNullOrBlank()) fields += "scope" to scope
-        return post(configuration.tokenEndpoint, form(*fields.toTypedArray()))
+        return post(configuration.tokenEndpoint, form(*fields.toTypedArray()), policy)
     }
 
-    private fun post(endpoint: String, body: String): AidTokens {
-        val connection = try {
-            URI(endpoint).toURL().openConnection() as HttpURLConnection
-        } catch (e: Exception) {
-            throw AidException("Failed to open OIDC token endpoint", e)
-        }
-
-        try {
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-
-            val responseCode = connection.responseCode
-            val stream = if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream
-            }
-            val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-
-            if (responseCode !in 200..299) {
-                val error = runCatching {
-                    JSONObject(response).optString("error").takeIf { it.isNotBlank() }
-                }.getOrNull()
-                val description = runCatching {
-                    JSONObject(response).optString("error_description").takeIf { it.isNotBlank() }
-                }.getOrNull()
-                throw AidTokenEndpointException(
-                    errorCode = error,
-                    message = "OIDC token request failed: HTTP $responseCode" +
-                        (error?.let { " ($it)" } ?: "") +
-                        (description?.let { " (provider description redacted)" } ?: ""),
-                )
-            }
-
-            return parseTokens(response)
+    private fun post(endpoint: String, body: String, policy: AidNetworkPolicy): AidTokens {
+        // Never retried: an authorization code is single-use and a rotating
+        // refresh token may already have been redeemed by a timed-out attempt.
+        val response = try {
+            AidHttp.postForm(
+                endpoint = endpoint,
+                body = body,
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "Content-Type" to "application/x-www-form-urlencoded",
+                ),
+                policy = policy,
+                retryable = false,
+            )
         } catch (e: AidException) {
-            throw e
-        } catch (e: Exception) {
             throw AidException("OIDC token request failed", e)
-        } finally {
-            connection.disconnect()
         }
+
+        if (!response.isSuccessful) {
+            val error = runCatching {
+                JSONObject(response.body).optString("error").takeIf { it.isNotBlank() }
+            }.getOrNull()
+            val description = runCatching {
+                JSONObject(response.body).optString("error_description").takeIf { it.isNotBlank() }
+            }.getOrNull()
+            throw AidTokenEndpointException(
+                errorCode = error,
+                message = "OIDC token request failed: HTTP " + response.status +
+                    (error?.let { " ($it)" } ?: "") +
+                    (description?.let { " (provider description redacted)" } ?: ""),
+            )
+        }
+
+        return parseTokens(response.body)
     }
 
     private fun parseTokens(json: String): AidTokens {

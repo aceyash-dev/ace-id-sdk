@@ -6,7 +6,7 @@ plugins {
 
 val sdkGroup = "cc.ace-base"
 val sdkArtifact = "ace-id-android"
-val sdkVersion = (findProperty("aceIdVersion") as String?) ?: "0.2.3"
+val sdkVersion = (findProperty("aceIdVersion") as String?) ?: "0.2.4"
 
 group = sdkGroup
 version = sdkVersion
@@ -35,6 +35,10 @@ android {
 
 dependencies {
     implementation("androidx.browser:browser:1.10.0")
+    // BiometricPrompt for the optional local session unlock. The platform class
+    // is not usable from an SDK: its constructor is package-private and its
+    // PromptInfo builder is not public on every API level.
+    implementation("androidx.biometric:biometric:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     testImplementation("junit:junit:4.13.2")
     // Use the real JVM JSON implementation in local unit tests instead of Android's mocked stubs.

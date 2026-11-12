@@ -9,9 +9,9 @@ JavaScript/TypeScript, Android, and iOS SDKs for authenticating users with Ace I
 
 | Platform | Version | Status |
 | --- | --- | --- |
-| JavaScript / TypeScript | `0.2.3` | Published on [npm](https://www.npmjs.com/package/ace-id-sdk) |
-| Android | `0.2.3` | Maven Central publication pending |
-| iOS (Swift Package) | `0.2.3` | Source only; no tagged release yet |
+| JavaScript / TypeScript | `0.2.4` | Published on [npm](https://www.npmjs.com/package/ace-id-sdk) |
+| Android | `0.2.4` | Maven Central publication pending |
+| iOS (Swift Package) | `0.2.4` | Source only; no tagged release yet |
 
 ## JavaScript / TypeScript
 
@@ -37,7 +37,32 @@ const session = await aid.handleCallback();
 console.log(session.user);
 ```
 
-Use `ace-id-sdk/server` only in trusted server runtimes. The optional React adapter is available from `ace-id-sdk/react`. Never expose a client secret in browser or mobile code.
+Session state, refresh and profile:
+
+```ts
+const stop = aid.onAuthStateChange((state) => {
+  switch (state.status) {
+    case "authenticated": return renderDashboard(state.session.user);
+    case "expired": return refreshOrPrompt();
+    case "refresh-failed": return showRetry(state.error);
+    case "unauthenticated": return renderSignIn();
+  }
+});
+
+const token = await aid.getValidAccessToken();  // refreshes when needed
+const user = await aid.fetchUserProfile();      // UserInfo, subject-checked
+```
+
+Entry points: `ace-id-sdk` (browser/Node), `ace-id-sdk/react`,
+`ace-id-sdk/server`, `ace-id-sdk/diagnostics`, `ace-id-sdk/testing`. Each is
+independently tree-shakeable with a size budget enforced in CI. Use
+`ace-id-sdk/server` only in trusted server runtimes. Never expose a client secret
+in browser or mobile code.
+
+More: [API reference](ACE-DOCS/API.md) · [React](ACE-DOCS/REACT.md) ·
+[Server and SSR](ACE-DOCS/SERVER.md) · [Errors](ACE-DOCS/ERRORS.md) ·
+[Examples](examples/README.md) · [Changelog](CHANGELOG.md) ·
+[Migrating to 0.2.4](ACE-DOCS/MIGRATION-0.2.4.md)
 
 ## Post-login redirects
 
@@ -51,15 +76,56 @@ ID token verification keeps one remote JWK set per `jwks_uri` for the life of th
 
 Discovery documents (512 KiB) and token responses (1 MiB) are read with a size limit and rejected when exceeded. A refresh or callback that completes after `signOut()` does not recreate the session.
 
+Discovery documents are cached per client for five minutes with issuer isolation and single-flight misses. Retries with exponential backoff apply to idempotent requests only — never to an authorization-code exchange or a refresh, where a retry can burn a single-use code or invalidate a rotating token. Callback URLs must match the registered origin **and** path, and duplicated authorization parameters are refused.
+
+## Diagnostics and logging
+
+```ts
+const report = await aid.validateConfiguration();
+if (!report.ok) console.table(report.checks.filter((c) => c.status !== "pass"));
+
+const aid = new AID({ ...config, logger: (entry) => telemetry(entry.event, entry.context) });
+```
+
+`validateConfiguration()` checks the issuer, redirect URI, PKCE, JWKS, signing
+algorithms, refresh grant, UserInfo and logout, without throwing. Log entries are
+redacted: tokens, codes, secrets, nonces and JWT-shaped strings never reach a
+sink. Without a `logger` or `debug: true`, the SDK logs nothing.
+
 ## Android (Maven Central)
 
 Available once the Maven Central publication is released:
 
 ```kotlin
 dependencies {
-    implementation("cc.ace-base:ace-id-android:0.2.3")
+    implementation("cc.ace-base:ace-id-android:0.2.4")
 }
 ```
+
+## Android quick start
+
+```kotlin
+val aceID = AceID(
+    issuer = "https://identity.ace-base.cc",
+    clientId = "your-public-client-id",
+    redirectUri = "com.example.app:/oauth/callback",
+)
+
+aceID.authState.collect { state ->
+    when (state) {
+        is AidSessionState.Authenticated -> showDashboard(state.account)
+        AidSessionState.Unauthenticated -> showSignIn()
+        AidSessionState.Expired -> refreshOrPrompt()
+        is AidSessionState.RefreshFailed -> showRetry(state.error)
+    }
+}
+```
+
+`login()` suspends until the callback returns, the transaction survives process
+death (`hasPendingAuthorization()`), refreshes are single-flight, and
+`AidNetworkPolicy` bounds timeouts and retries. Optional biometric session unlock
+is available through `androidx.biometric`. Full guide:
+[ACE-DOCS/ANDROID.md](ACE-DOCS/ANDROID.md).
 
 ## Native SDKs
 

@@ -2,41 +2,43 @@ package tab.aid.sdk
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URI
 
 internal object AidAccountClient {
-    fun fetch(configuration: OidcConfiguration, accessToken: String): AidUser {
+    @JvmOverloads
+    fun fetch(
+        configuration: OidcConfiguration,
+        accessToken: String,
+        policy: AidNetworkPolicy = AidNetworkPolicy.standard(),
+    ): AidUser {
         val endpoint = configuration.userInfoEndpoint
             ?: throw AidDiscoveryException("OIDC discovery document is missing userinfo_endpoint")
-        val connection = try {
-            URI(endpoint).toURL().openConnection() as HttpURLConnection
-        } catch (e: Exception) {
-            throw AidException("Failed to open OIDC UserInfo endpoint", e)
+        val response = try {
+            // UserInfo is an idempotent GET; a transient 5xx is safe to repeat.
+            AidHttp.get(
+                endpoint = endpoint,
+                headers = mapOf(
+                    "Accept" to "application/json",
+                    "Authorization" to "Bearer " + accessToken,
+                ),
+                policy = policy,
+                retryable = true,
+            )
+        } catch (e: AidException) {
+            throw AidException("OIDC UserInfo request failed", e)
         }
 
-        try {
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.setRequestProperty("Accept", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer $accessToken")
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) throw AidException("OIDC UserInfo request failed: HTTP $responseCode")
-            val json = connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-            val value = try { JSONObject(json) } catch (e: Exception) {
-                throw AidException("OIDC UserInfo response is not valid JSON", e)
-            }
-            val subject = value.optString("sub")
-            if (subject.isBlank()) throw AidException("OIDC UserInfo response is missing sub")
-            return AidUser(subject = subject, claims = jsonObjectToMap(value))
-        } catch (e: AidException) {
-            throw e
-        } catch (e: Exception) {
-            throw AidException("OIDC UserInfo request failed", e)
-        } finally {
-            connection.disconnect()
+        if (response.status == 401 || response.status == 403) {
+            throw AidException("OIDC UserInfo rejected the access token: HTTP " + response.status)
         }
+        if (!response.isSuccessful) {
+            throw AidException("OIDC UserInfo request failed: HTTP " + response.status)
+        }
+        val value = try { JSONObject(response.body) } catch (e: Exception) {
+            throw AidException("OIDC UserInfo response is not valid JSON", e)
+        }
+        val subject = value.optString("sub")
+        if (subject.isBlank()) throw AidException("OIDC UserInfo response is missing sub")
+        return AidUser(subject = subject, claims = jsonObjectToMap(value))
     }
 
     private fun jsonObjectToMap(value: JSONObject): Map<String, Any?> {

@@ -16,6 +16,19 @@ class AidAsync internal constructor(private val client: AceID) {
     suspend fun getAccount(context: Context, cache: Boolean = true): AidUser? =
         client.getAccount(context, cache)
 
+    /** Cross-platform alias of [getAccount]. */
+    suspend fun getProfile(context: Context, cache: Boolean = true): AidUser? =
+        client.getProfile(context, cache)
+
+    suspend fun currentSession(context: Context): AidSession? =
+        withContext(Dispatchers.IO) { client.currentSession(context) }
+
+    suspend fun refreshSession(context: Context): AidSession = client.refreshSession(context)
+
+    /** Whether an authorization transaction is waiting for its callback. */
+    fun hasPendingAuthorization(context: Context): Boolean =
+        client.hasPendingAuthorization(context)
+
     suspend fun getValidAccessToken(
         context: Context,
         leewaySeconds: Long = AceID.DEFAULT_TOKEN_LEEWAY_SECONDS,
