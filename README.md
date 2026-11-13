@@ -61,7 +61,7 @@ in browser or mobile code.
 
 More: [API reference](ACE-DOCS/API.md) · [React](ACE-DOCS/REACT.md) ·
 [Server and SSR](ACE-DOCS/SERVER.md) · [Errors](ACE-DOCS/ERRORS.md) ·
-[Examples](examples/README.md) · [Changelog](CHANGELOG.md) ·
+[Examples](ACE-DOCS/EXAMPLES.md) · [Changelog](ACE-DOCS/CHANGELOG.md) ·
 [Migrating to 0.2.4](ACE-DOCS/MIGRATION-0.2.4.md)
 
 ## Post-login redirects

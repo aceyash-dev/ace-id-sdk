@@ -10,12 +10,14 @@ This directory contains the maintained documentation for the Ace ID SDK. The imp
 - [Android SDK](ANDROID.md)
 - [Error codes](ERRORS.md)
 - [Migration guide for 0.2.4](MIGRATION-0.2.4.md)
+- [Runnable examples](EXAMPLES.md)
+- [Changelog](CHANGELOG.md)
 
 ## SDK source layout
 
 - `src/` — JavaScript / TypeScript SDK implementation
 - `android/` — Android library module
 - `Sources/` — Swift package implementation
-- `examples/` — runnable integration examples
+- `examples/` — runnable integration examples (source only; documented in [EXAMPLES.md](EXAMPLES.md))
 
 For installation, release status, and a quick start, see the [repository README](../README.md).
