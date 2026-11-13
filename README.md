@@ -59,10 +59,10 @@ independently tree-shakeable with a size budget enforced in CI. Use
 `ace-id-sdk/server` only in trusted server runtimes. Never expose a client secret
 in browser or mobile code.
 
-More: [API reference](ACE-DOCS/API.md) · [React](ACE-DOCS/REACT.md) ·
-[Server and SSR](ACE-DOCS/SERVER.md) · [Errors](ACE-DOCS/ERRORS.md) ·
-[Examples](ACE-DOCS/EXAMPLES.md) · [Changelog](ACE-DOCS/CHANGELOG.md) ·
-[Migrating to 0.2.4](ACE-DOCS/MIGRATION-0.2.4.md)
+More: [API reference](https://docs.ace-base.cc/projects/ace-id-sdk-api) · [React](https://docs.ace-base.cc/projects/ace-id-sdk-react) ·
+[Server and SSR](https://docs.ace-base.cc/projects/ace-id-sdk-server) · [Errors](https://docs.ace-base.cc/projects/ace-id-sdk-errors) ·
+[Examples](https://docs.ace-base.cc/projects/ace-id-sdk-examples) · [Changelog](https://docs.ace-base.cc/projects/ace-id-sdk-changelog) ·
+[Migrating to 0.2.4](https://docs.ace-base.cc/projects/ace-id-sdk-migration)
 
 ## Post-login redirects
 
@@ -125,13 +125,14 @@ aceID.authState.collect { state ->
 death (`hasPendingAuthorization()`), refreshes are single-flight, and
 `AidNetworkPolicy` bounds timeouts and retries. Optional biometric session unlock
 is available through `androidx.biometric`. Full guide:
-[ACE-DOCS/ANDROID.md](ACE-DOCS/ANDROID.md).
+[Android guide](https://docs.ace-base.cc/projects/ace-id-sdk-android).
 
 ## Native SDKs
 
 - [Android SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-android)
-- [iOS SDK guide](https://docs.ace-base.cc/projects/ace-id-sdk-ios)
-- [React, Next.js, and SSR guide](https://docs.ace-base.cc/projects/ace-id-sdk-framework-adapters)
+- [iOS Swift Package](https://docs.ace-base.cc/projects/ace-id-sdk#install)
+- [React guide](https://docs.ace-base.cc/projects/ace-id-sdk-react)
+- [Server, Next.js, and SSR guide](https://docs.ace-base.cc/projects/ace-id-sdk-server)
 
 ## Security
 
